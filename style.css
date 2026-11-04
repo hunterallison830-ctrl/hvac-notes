@@ -61,3 +61,4 @@ a{color:#ffd400}
 .ubtns .btn{margin:6px 0}.ubtns .row .btn{font-size:16px}
 @media print{#nav{display:none}}
 .chk{font-weight:400;color:#fff}.chk b{color:#ffd400}
+#ver{font-size:.7em;opacity:.6;margin-left:.4em;align-self:center}

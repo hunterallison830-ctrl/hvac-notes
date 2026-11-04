@@ -1,5 +1,5 @@
 import {initializeApp,getAuth,signInAnonymously,onAuthStateChanged,connectAuthEmulator,initializeFirestore,persistentLocalCache,persistentMultipleTabManager,collection,doc,setDoc,getDoc,deleteDoc,onSnapshot,writeBatch,serverTimestamp,connectFirestoreEmulator,getDocsFromServer,waitForPendingWrites,query,where} from './vendor/firebase.js';
-import * as T from './tools.js';
+import * as T from './tools.js?v=7';
 const CFG={apiKey:'AIzaSyBzDl3H0OzCSFEl-sL1wWjr5s2esUH6fqo',authDomain:'hvac-notes.firebaseapp.com',projectId:'hvac-notes',storageBucket:'hvac-notes.firebasestorage.app',messagingSenderId:'315070304695',appId:'1:315070304695:web:9739e6600647bfc7db5832'};
 const fbApp=initializeApp(CFG),auth=getAuth(fbApp);
 const fdb=initializeFirestore(fbApp,{localCache:persistentLocalCache({tabManager:persistentMultipleTabManager()})});
@@ -204,7 +204,14 @@ async function firstSync(){LEGACY=await loadLegacy();const miss=legacyMissing();
  if(!DB.locations.length)putLoc({id:'jewish-academy-atlanta',name:'Jewish Academy Atlanta'});
  refresh()}
 boot();
-if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+// ---- Auto-update (v7) ----
+if('serviceWorker'in navigator){const sw=navigator.serviceWorker;let hadCtl=!!sw.controller,reloading=false;
+ sw.register('sw.js?v=7',{updateViaCache:'none'}).then(r=>{const up=()=>{if(navigator.onLine)r.update().catch(()=>{})};up();
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')up()});addEventListener('focus',up);addEventListener('online',up);
+  if(r.waiting)r.waiting.postMessage('skip')}).catch(()=>{});
+ sw.addEventListener('controllerchange',()=>{if(!hadCtl){hadCtl=true;return}if(reloading)return;
+  if(typeof formOpen==='function'&&formOpen()){const b=document.getElementById('rbanner');clearTimeout(rb.t);b.className='warn';b.textContent='Update ready, tap to reload';b.hidden=false;b.style.cursor='pointer';b.onclick=()=>{if(!formOpen()||confirm('Reload now? Unsaved typing will be lost.')){reloading=true;location.reload()}};return}
+  reloading=true;location.reload()})}
 
 // ---- Refresh / "did it save?" check (no page reload, never wipes an open form) ----
 const formOpen=()=>{const a=document.activeElement;return location.hash.includes('/edit')||!!(a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&a.id!=='q'&&a.value)};
