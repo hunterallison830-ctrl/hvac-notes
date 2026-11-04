@@ -56,10 +56,26 @@ function vHome(){setTitle('HVAC Notes');
   const hits=DB.units.filter(u=>[u.tag,u.model,u.serial,u.make,typeOf(u),u.where,filtStr(u),(u.belts||''),u.notes].join(' ').toLowerCase().includes(s)).sort((a,b)=>natCmp(a.tag,b.tag)).slice(0,50);
   $('#res').innerHTML=hits.length?hits.map(uCard).join(''):'<p class="sub">No matches</p>'};}
 const uCard=u=>`<button class="card" data-go="#/unit/${u.id}"><b>${esc(u.tag||'(no tag)')}</b> <span class="sub">${esc(typeOf(u))}</span> ${badge(u)}<div class="sub">${esc([u.where,u.make,u.model].filter(Boolean).join(' · '))}${loc(u.locId)&&location.hash.length<3?' — '+esc(loc(u.locId).name):''}</div>${filtStr(u)?`<div class="sub">Filters: ${esc(filtStr(u))}</div>`:''}</button>`;
-function vLoc(id){const l=loc(id);if(!l)return go('#/');setTitle(l.name);const us=unitsAt(id);
- app.innerHTML=`<button class="btn" data-act="addUnit" data-id="${id}">＋ Add unit</button>`+(us.length?us.map(uCard).join(''):'<p class="sub">No units yet. Tap “Add unit” as you walk the building.</p>')+
+let locQ={};const collapsed=new Set(JSON.parse(localStorage.getItem('hvac-collapsed')||'[]'));
+const hay=u=>[u.tag,typeOf(u),u.model,u.serial,u.make,u.where,u.belts,filtStr(u),u.notes,...(u.custom||[]).map(c=>c.value)].filter(Boolean).join(' ').toLowerCase();
+const tKey=u=>{const t=typeOf(u).trim().toLowerCase();return t&&t!=='other'?t:'other'};
+const tLabel=(k,us)=>k==='other'?'Other':(k.length<=4?k.toUpperCase():typeOf(us[0]).trim());
+function vLoc(id){const l=loc(id);if(!l)return go('#/');setTitle(l.name);
+ app.innerHTML=`<button class="btn" data-act="addUnit" data-id="${id}">＋ Add unit</button><div id="lsw"><div class="sbox"><input id="lq" type="search" placeholder="🔍 Search this location…" aria-label="Search units in this location" autocomplete="off" value="${esc(locQ[id]||'')}"><button id="lqx" class="sx" aria-label="Clear search" type="button">✕</button></div><div id="lcount" class="sub"></div></div><div id="ulist"></div>`+
  `<div class="row"><button class="btn alt" data-act="exportLoc" data-id="${id}">Export / share</button><button class="btn alt" data-go="#/print/${id}">Print / text</button></div>
- <div class="row"><button class="btn alt" data-act="renLoc" data-id="${id}">Rename</button><button class="btn danger" data-act="delLoc" data-id="${id}">Delete</button></div>`}
+ <div class="row"><button class="btn alt" data-act="renLoc" data-id="${id}">Rename</button><button class="btn danger" data-act="delLoc" data-id="${id}">Delete</button></div>`;
+ const q=$('#lq');let tm;q.oninput=()=>{locQ[id]=q.value;clearTimeout(tm);if(DB.units.length>400)tm=setTimeout(()=>drawList(id),120);else drawList(id)};
+ $('#lqx').onclick=()=>{q.value='';locQ[id]='';drawList(id);q.focus()};
+ $('#ulist').addEventListener('click',e=>{const sm=e.target.closest('summary');if(!sm||(locQ[id]||'').trim())return;const d=sm.parentNode,k=id+'|'+d.dataset.k;d.open?collapsed.add(k):collapsed.delete(k);localStorage.setItem('hvac-collapsed',JSON.stringify([...collapsed]))});
+ document.documentElement.style.setProperty('--barh',$('#bar').offsetHeight+'px');drawList(id)}
+function drawList(id){const box=$('#ulist');if(!box)return;const all=unitsAt(id),terms=(locQ[id]||'').trim().toLowerCase().split(/\s+/).filter(Boolean);
+ const us=terms.length?all.filter(u=>{const h=hay(u);return terms.every(t=>h.includes(t))}):all;
+ $('#lqx').hidden=!terms.length;$('#lcount').textContent=terms.length?`${us.length} of ${all.length} units`:`${all.length} unit${all.length===1?'':'s'}`;
+ if(!all.length){box.innerHTML='<p class="sub">No units yet. Tap “Add unit” as you walk the building.</p>';return}
+ if(!us.length){box.innerHTML='<p class="sub">No units match.</p>';return}
+ const g=new Map();us.forEach(u=>{const k=tKey(u);g.has(k)||g.set(k,[]);g.get(k).push(u)});
+ const ks=[...g.keys()].sort((a,b)=>a==='other'?1:b==='other'?-1:natCmp(a,b));
+ box.innerHTML=ks.map(k=>{const list=g.get(k),open=terms.length||!collapsed.has(id+'|'+k);return`<details class="grp" data-k="${esc(k)}"${open?' open':''}><summary><span>${esc(tLabel(k,list))}</span><span class="cnt">${list.length}</span></summary>${list.map(uCard).join('')}</details>`}).join('')}
 function kv(k,v,copy){if(!v)return'';return`<div class="kv"><div class="k">${k}</div><div class="v">${esc(v)}</div>${copy?`<button class="copy" data-copy="${esc(v)}">Copy</button>`:''}</div>`}
 function vUnit(id){const u=unit(id);if(!u)return go('#/');setTitle(u.tag||'Unit');const l=loc(u.locId);
  app.innerHTML=`<button class="btn" data-go="#/unit/${id}/edit">✎ Edit</button><div class="sub">${esc(l?l.name:'')} · ${badge(u)}</div>`+kv('Tag',u.tag,1)+kv('Type',typeOf(u))+kv('Location',u.where)+kv('Make',u.make)+kv('Model',u.model,1)+kv('Serial',u.serial,1)+kv('Belt(s)',u.belts,1)+
@@ -136,7 +152,7 @@ function render(keep){if(!started)return vGate();const p=location.hash.split('/'
 window.addEventListener('hashchange',()=>{const p=location.hash.split('/');if(draft&&!(p[1]==='unit'&&p[2]===draft.id))draft=null;render()});
 window.__hvac={importText,get DB(){return DB},get pending(){return pending}};
 // live refresh without wiping a form someone is typing in
-function refresh(){if(!started)return;const a=document.activeElement;if(location.hash.includes('/edit')||(a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&a.value))return;render(true)}
+function refresh(){if(!started)return;if(/^#\/loc\//.test(location.hash)&&$('#ulist')){drawList(location.hash.split('/')[2]);return}const a=document.activeElement;if(location.hash.includes('/edit')||(a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&a.value))return;render(true)}
 // ---- passcode gate + boot ----
 let started=false,me=null,meP=null,gateMsg='';
 function vGate(){setTitle('HVAC Notes');$('#back').style.visibility='hidden';
