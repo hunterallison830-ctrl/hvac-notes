@@ -1,0 +1,66 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isMember() {
+      return signedIn() && exists(/databases/$(database)/documents/members/$(request.auth.uid));
+    }
+    function str(v, max) { return v is string && v.size() <= max; }
+    function optStr(d, k, max) { return !(k in d) || str(d[k], max); }
+    function optList(d, k, max) { return !(k in d) || (d[k] is list && d[k].size() <= max); }
+
+    // Crew passcode lives here. Clients can never read or write it.
+    match /config/{doc} {
+      allow read, write: if false;
+    }
+
+    // Join the crew: only for yourself, only with the right passcode.
+    match /members/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list, update, delete: if false;
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['code', 'name', 'joined'])
+        && request.resource.data.code is string
+        && request.resource.data.code == get(/databases/$(database)/documents/config/crew).data.code
+        && optStr(request.resource.data, 'name', 60);
+    }
+
+    match /locations/{id} {
+      allow read, delete: if isMember();
+      allow create, update: if isMember() && id.size() <= 64
+        && request.resource.data.keys().hasOnly(['name', 'updated', 'updatedAt', 'updatedBy'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 200
+        && optStr(request.resource.data, 'updated', 40)
+        && optStr(request.resource.data, 'updatedBy', 60);
+    }
+
+    match /units/{id} {
+      allow read, delete: if isMember();
+      allow create, update: if isMember() && id.size() <= 64
+        && request.resource.data.keys().hasOnly(['locationId', 'tag', 'type', 'customType', 'where',
+             'make', 'model', 'serial', 'belts', 'filters', 'notes', 'service', 'custom',
+             'updated', 'updatedAt', 'updatedBy'])
+        && str(request.resource.data.locationId, 64)
+        && optStr(request.resource.data, 'tag', 100)
+        && optStr(request.resource.data, 'type', 60)
+        && optStr(request.resource.data, 'customType', 100)
+        && optStr(request.resource.data, 'where', 300)
+        && optStr(request.resource.data, 'make', 200)
+        && optStr(request.resource.data, 'model', 200)
+        && optStr(request.resource.data, 'serial', 200)
+        && optStr(request.resource.data, 'belts', 300)
+        && optStr(request.resource.data, 'notes', 20000)
+        && optStr(request.resource.data, 'updated', 40)
+        && optStr(request.resource.data, 'updatedBy', 60)
+        && optList(request.resource.data, 'filters', 50)
+        && optList(request.resource.data, 'custom', 100)
+        && optList(request.resource.data, 'service', 1000);
+    }
+
+    // Everything else is closed.
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
