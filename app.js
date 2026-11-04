@@ -22,9 +22,10 @@ async function loadLegacy(){idb=await openIDB();let d=idb?await idbGet():null;
 // ---- shared database (Firestore) ----
 const myName=()=>localStorage.getItem('hvac-name')||'';
 let pending=0,draft=null;
+const LIM={tag:100,type:60,customType:100,where:300,make:200,model:200,serial:200,belts:300,notes:20000,filters:50,custom:100,service:1000};
 const UF=['tag','type','customType','where','make','model','serial','belts','filters','notes','service','custom'];
-function toDoc(u){const d={locationId:String(u.locId||''),updated:u.updated||now(),updatedAt:serverTimestamp(),updatedBy:(u.updatedBy??myName()).slice(0,60)};
- UF.forEach(k=>{const v=u[k];d[k]=['filters','service','custom'].includes(k)?(Array.isArray(v)?v:[]):String(v??'')});return d}
+function toDoc(u){const d={locationId:String(u.locId||''),updated:u.updated||now(),updatedAt:serverTimestamp(),updatedBy:String(u.updatedBy??myName()).slice(0,60)};
+ UF.forEach(k=>{const v=u[k];d[k]=['filters','service','custom'].includes(k)?(Array.isArray(v)?v.slice(0,LIM[k]):[]):String(v??'').slice(0,LIM[k])});d.locationId=d.locationId.slice(0,64);d.updated=String(d.updated).slice(0,40);return d}
 const fromUnit=s=>{const d=s.data();return{...d,id:s.id,locId:d.locationId}};
 function track(p){pending++;syncStatus();p.catch(e=>{console.error(e);toast(e.code==='permission-denied'?'Not allowed: '+e.code:'Save failed: '+(e.code||e.message))}).finally(()=>{pending--;syncStatus()})}
 function putUnit(u,keepStamp){if(!keepStamp){u.updated=now();u.updatedBy=myName()}track(setDoc(doc(fdb,'units',u.id),toDoc(u)))}
@@ -48,7 +49,7 @@ function backupBanner(){if(!DB.units.length)return'';const le=localStorage.getIt
 function vHome(){setTitle('HVAC Notes');
  app.innerHTML=backupBanner()+`<input id="q" type="search" placeholder="🔍 Search tag, model, serial, filter…" aria-label="Search all units">
  <div id="res"></div><h2>Locations</h2>`+DB.locations.slice().sort((a,b)=>natCmp(a.name,b.name)).map(l=>`<button class="card" data-go="#/loc/${l.id}"><b>${esc(l.name)}</b><div class="sub">${unitsAt(l.id).length} units</div></button>`).join('')+
- `<button class="btn" data-act="addLoc">＋ Add location</button><div class="row"><button class="btn alt" data-act="exportAll">Export all</button><button class="btn alt" data-act="import">Import file</button></div>
+ `<button class="btn" data-act="addLoc">＋ Add location</button><div class="row"><button class="btn alt" data-act="exportAll">Export all</button>${legacyMissing().length?'<button class="btn alt" data-act="uploadOld" id="uploadOld">Upload this phone\'s old units ('+legacyMissing().length+')</button>':''}<button class="btn alt" data-act="import">Import file</button></div>
  <p class="sub">Shared live with your crew. Works offline and syncs when you're back online. You are <b>${esc(myName()||'(no name)')}</b> <button class="mini" data-act="setName">Change name</button></p>`;
  const q=$('#q');q.oninput=()=>{const s=q.value.trim().toLowerCase();if(!s){$('#res').innerHTML='';return}
   const hits=DB.units.filter(u=>[u.tag,u.model,u.serial,u.make,typeOf(u),u.where,filtStr(u),(u.belts||''),u.notes].join(' ').toLowerCase().includes(s)).sort((a,b)=>natCmp(a.tag,b.tag)).slice(0,50);
@@ -125,7 +126,7 @@ const A={
  delSvc(id,el){const u=unit(id);if(confirm('Delete this service entry?')){u.service=u.service.filter(s=>s.id!==el.dataset.s);putUnit(u);render()}},
  addF(){$('#fl').insertAdjacentHTML('beforeend',fRow({size:'',qty:''}))},addC(){$('#cl').insertAdjacentHTML('beforeend',cRow({label:'',value:''}))},
  rmRow(id,el){el.parentNode.remove()},
- exportAll(){exportData(null,'all')},exportLoc(id){exportData([id],loc(id).name)},import(){$('#file').click()},print(){window.print()}};
+ exportAll(){exportData(null,'all')},uploadOld(){if(confirm(`Upload ${legacyMissing().length} unit(s) saved only on this phone?`))uploadLegacy()},exportLoc(id){exportData([id],loc(id).name)},import(){$('#file').click()},print(){window.print()}};
 app.addEventListener('click',e=>{const t=e.target.closest('[data-go],[data-act],[data-copy]');if(!t)return;
  if(t.dataset.copy!==undefined){const v=t.dataset.copy;(navigator.clipboard?navigator.clipboard.writeText(v):Promise.reject()).then(()=>toast('Copied'),()=>{const ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();toast('Copied')});return}
  if(t.dataset.go)return go(t.dataset.go);e.preventDefault();A[t.dataset.act]&&A[t.dataset.act](t.dataset.id,t)});
@@ -158,12 +159,27 @@ function begin(){if(started)return;started=true;render();syncStatus();
  onSnapshot(collection(fdb,'locations'),{includeMetadataChanges:true},s=>{DB.locations=s.docs.map(d=>({id:d.id,...d.data()}));if(!s.metadata.fromCache)gotL=true;after()},e=>toast('Sync error: '+e.code));
  onSnapshot(collection(fdb,'units'),{includeMetadataChanges:true},s=>{DB.units=s.docs.map(fromUnit);if(!s.metadata.fromCache)gotU=true;after()},e=>toast('Sync error: '+e.code))}
 function after(){syncStatus();if(gotL&&gotU&&!firstDone){firstDone=true;firstSync()}refresh()}
-async function firstSync(){const old=await loadLegacy();
- if(!DB.units.length&&old.units.length&&!localStorage.getItem('hvac-upload-asked')){localStorage.setItem('hvac-upload-asked','1');
-  if(confirm(`The shared crew list is empty. Upload the ${old.units.length} unit(s) saved on this phone so the crew can see them?`)){
-   const map={},ops=[];(old.locations||[]).forEach(l=>{const ex=DB.locations.find(x=>x.name.toLowerCase()===String(l.name).toLowerCase());if(ex)map[l.id]=ex.id;else{map[l.id]=l.id;ops.push(b=>b.set(doc(fdb,'locations',String(l.id)),{name:String(l.name).slice(0,200),updated:l.updated||now(),updatedAt:serverTimestamp(),updatedBy:myName()}))}});
-   old.units.forEach(u=>{const c={...u,locId:map[u.locId]||u.locId};ops.push(b=>b.set(doc(fdb,'units',String(u.id)),toDoc(c)))});
-   await batchWrite(ops);toast('Uploaded '+old.units.length+' units');return}}
- if(!DB.locations.length)putLoc({id:'jewish-academy-atlanta',name:'Jewish Academy Atlanta'})}
+// ---- old phone-only (v1) units: find any not yet in the shared list ----
+let LEGACY={locations:[],units:[]},upBusy=false;
+const upDone=()=>{try{return new Set(JSON.parse(localStorage.getItem('hvac-uploaded-ids')||'[]'))}catch(e){return new Set()}};
+function legacyMissing(){const have=new Set(DB.units.map(u=>u.id)),done=upDone();return LEGACY.units.filter(u=>u&&u.id&&!have.has(String(u.id))&&!done.has(String(u.id)))}
+async function uploadLegacy(){const miss=legacyMissing();if(!miss.length||upBusy)return;upBusy=true;
+ try{const byName={};DB.locations.forEach(l=>{byName[String(l.name).trim().toLowerCase()]=l.id});
+  const ops=[],map={};
+  (LEGACY.locations||[]).forEach(l=>{const nm=String(l.name||'').trim().slice(0,200)||'Imported location',k=nm.toLowerCase();
+   if(!byName[k]){let id=String(l.id||uid()).slice(0,64);if(DB.locations.some(x=>x.id===id))id=uid();byName[k]=id;
+    ops.push(b=>b.set(doc(fdb,'locations',id),{name:nm,updated:String(l.updated||now()).slice(0,40),updatedAt:serverTimestamp(),updatedBy:myName().slice(0,60)}))}
+   map[l.id]=byName[k]});
+  miss.forEach(u=>{let li=map[u.locId];if(!li){const k='imported units';if(!byName[k]){const id=uid();byName[k]=id;ops.push(b=>b.set(doc(fdb,'locations',id),{name:'Imported units',updated:now(),updatedAt:serverTimestamp(),updatedBy:myName().slice(0,60)}))}li=byName[k]}
+   const c={...u,locId:li};ops.push(b=>b.set(doc(fdb,'units',String(u.id).slice(0,64)),toDoc(c)))});
+  for(let i=0;i<ops.length;i+=400){const b=writeBatch(fdb);ops.slice(i,i+400).forEach(o=>o(b));const pr=b.commit();track(pr);await pr}
+  const done=upDone();miss.forEach(u=>done.add(String(u.id)));localStorage.setItem('hvac-uploaded-ids',JSON.stringify([...done]));
+  toast('Uploaded '+miss.length+' unit(s)')}
+ catch(e){console.error(e);toast('Upload failed, try again: '+(e.code||e.message))}
+ finally{upBusy=false;refresh()}}
+async function firstSync(){LEGACY=await loadLegacy();const miss=legacyMissing();
+ if(miss.length&&confirm(`Upload ${miss.length} unit(s) saved only on this phone?`))await uploadLegacy();
+ if(!DB.locations.length)putLoc({id:'jewish-academy-atlanta',name:'Jewish Academy Atlanta'});
+ refresh()}
 boot();
 if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
