@@ -1,4 +1,5 @@
 import {initializeApp,getAuth,signInAnonymously,onAuthStateChanged,connectAuthEmulator,initializeFirestore,persistentLocalCache,persistentMultipleTabManager,collection,doc,setDoc,getDoc,deleteDoc,onSnapshot,writeBatch,serverTimestamp,connectFirestoreEmulator,getDocsFromServer,waitForPendingWrites,query,where} from './vendor/firebase.js';
+import * as T from './tools.js';
 const CFG={apiKey:'AIzaSyBzDl3H0OzCSFEl-sL1wWjr5s2esUH6fqo',authDomain:'hvac-notes.firebaseapp.com',projectId:'hvac-notes',storageBucket:'hvac-notes.firebasestorage.app',messagingSenderId:'315070304695',appId:'1:315070304695:web:9739e6600647bfc7db5832'};
 const fbApp=initializeApp(CFG),auth=getAuth(fbApp);
 const fdb=initializeFirestore(fbApp,{localCache:persistentLocalCache({tabManager:persistentMultipleTabManager()})});
@@ -41,7 +42,7 @@ const typeOf=u=>u.type==='Other'&&u.customType?u.customType:(u.type||'');
 const filtStr=u=>(u.filters||[]).filter(f=>f.size).map(f=>f.size+(f.qty?' ×'+f.qty:'')).join(', ');
 const go=h=>{location.hash=h};
 // ---- header ----
-$('#back').onclick=()=>{const p=location.hash.split('/');if(p[1]==='unit'){const u=unit(p[2]);if(p[3]==='edit'&&u&&!u._new)go('#/unit/'+u.id);else go(u?'#/loc/'+u.locId:'#/')}else if(p[1]==='print'||p[1]==='loc')go(p[1]==='print'?'#/loc/'+p[2]:'#/');else go('#/')};
+$('#back').onclick=()=>{const p=location.hash.split('/');if(p[1]==='unit'){const u=unit(p[2]);if(p[3]==='edit'&&u&&!u._new)go('#/unit/'+u.id);else go(u?'#/loc/'+u.locId:'#/')}else if(p[1]==='tools'){const u=p[3]&&unit(p[3]);go(u?'#/unit/'+u.id:p.length>2?(p[2]==='guide'?'#/tools/guides':'#/tools'):'#/')}else if(p[1]==='print'||p[1]==='loc')go(p[1]==='print'?'#/loc/'+p[2]:'#/');else go('#/')};
 $('#home').onclick=()=>go('#/');
 const setTitle=t=>{$('#title').textContent=t;$('#back').style.visibility=location.hash.length>2?'visible':'hidden'};
 function backupBanner(){if(!DB.units.length)return'';const le=localStorage.getItem('hvac-lastExport');const days=le?Math.floor((Date.now()-new Date(le))/864e5):null;
@@ -55,7 +56,7 @@ function vHome(){setTitle('HVAC Notes');
  const q=$('#q');q.oninput=()=>{const s=q.value.trim().toLowerCase();if(!s){$('#res').innerHTML='';return}
   const hits=DB.units.filter(u=>[u.tag,u.model,u.serial,u.make,typeOf(u),u.where,filtStr(u),(u.belts||''),u.notes].join(' ').toLowerCase().includes(s)).sort((a,b)=>natCmp(a.tag,b.tag)).slice(0,50);
   $('#res').innerHTML=hits.length?hits.map(uCard).join(''):'<p class="sub">No matches</p>'};}
-const uCard=u=>`<button class="card" data-go="#/unit/${u.id}"><b>${esc(u.tag||'(no tag)')}</b> <span class="sub">${esc(typeOf(u))}</span> ${badge(u)}<div class="sub">${esc([u.where,u.make,u.model].filter(Boolean).join(' · '))}${loc(u.locId)&&location.hash.length<3?' — '+esc(loc(u.locId).name):''}</div>${filtStr(u)?`<div class="sub">Filters: ${esc(filtStr(u))}</div>`:''}</button>`;
+const uCard=u=>`<button class="card" data-go="#/unit/${u.id}"><b>${esc(u.tag||'(no tag)')}</b> <span class="sub">${esc(typeOf(u))}</span> ${badge(u)}<div class="sub">${esc([u.where,u.make,u.model].filter(Boolean).join(' · '))}${loc(u.locId)&&(location.hash.length<3||location.hash.startsWith('#/tools'))?' — '+esc(loc(u.locId).name):''}</div>${filtStr(u)?`<div class="sub">Filters: ${esc(filtStr(u))}</div>`:''}</button>`;
 let locQ={};const collapsed=new Set(JSON.parse(localStorage.getItem('hvac-collapsed')||'[]'));
 const hay=u=>[u.tag,typeOf(u),u.model,u.serial,u.make,u.where,u.belts,filtStr(u),u.notes,...(u.custom||[]).map(c=>c.value)].filter(Boolean).join(' ').toLowerCase();
 const tKey=u=>{const t=typeOf(u).trim().toLowerCase();return t&&t!=='other'?t:'other'};
@@ -78,8 +79,8 @@ function drawList(id){const box=$('#ulist');if(!box)return;const all=unitsAt(id)
  box.innerHTML=ks.map(k=>{const list=g.get(k),open=terms.length||!collapsed.has(id+'|'+k);return`<details class="grp" data-k="${esc(k)}"${open?' open':''}><summary><span>${esc(tLabel(k,list))}</span><span class="cnt">${list.length}</span></summary>${list.map(uCard).join('')}</details>`}).join('')}
 function kv(k,v,copy){if(!v)return'';return`<div class="kv"><div class="k">${k}</div><div class="v">${esc(v)}</div>${copy?`<button class="copy" data-copy="${esc(v)}">Copy</button>`:''}</div>`}
 function vUnit(id){const u=unit(id);if(!u)return go('#/');setTitle(u.tag||'Unit');const l=loc(u.locId);
- app.innerHTML=`<button class="btn" data-go="#/unit/${id}/edit">✎ Edit</button><div class="sub">${esc(l?l.name:'')} · ${badge(u)}</div>`+kv('Tag',u.tag,1)+kv('Type',typeOf(u))+kv('Location',u.where)+kv('Make',u.make)+kv('Model',u.model,1)+kv('Serial',u.serial,1)+kv('Belt(s)',u.belts,1)+
- (u.filters||[]).filter(f=>f.size).map(f=>kv('Filter',f.size+(f.qty?'  ×'+f.qty:''),0)).join('')+(u.custom||[]).filter(c=>c.label||c.value).map(c=>kv(esc(c.label),c.value,1)).join('')+
+ app.innerHTML=`<button class="btn" data-go="#/unit/${id}/edit">✎ Edit</button><div class="sub">${esc(l?l.name:'')} · ${badge(u)} ${T.pmTag(u)}</div><div class="ubtns"><button class="btn" data-go="#/tools/ts/${id}">🩺 Service call</button><div class="row"><button class="btn alt" data-go="${T.eqFor(u)?'#/tools/guide/'+T.eqFor(u):'#/tools/guides'}">📘 Guide for this type</button><button class="btn alt" data-go="#/tools/charge/${id}">⚖️ Charge calc</button></div></div>`+kv('Tag',u.tag,1)+kv('Type',typeOf(u))+kv('Location',u.where)+kv('Make',u.make)+kv('Model',u.model,1)+kv('Serial',u.serial,1)+kv('Belt(s)',u.belts,1)+kv('Refrigerant',T.cget(u,T.RE_REF))+kv('Factory charge',T.cget(u,T.RE_CHG))+
+ (u.filters||[]).filter(f=>f.size).map(f=>kv('Filter',f.size+(f.qty?'  ×'+f.qty:''),0)).join('')+(u.custom||[]).filter(c=>(c.label||c.value)&&!T.RE_REF.test(c.label||'')&&!T.RE_CHG.test(c.label||'')).map(c=>kv(esc(c.label),c.value,1)).join('')+
  (u.notes?`<h2>Notes</h2><div style="white-space:pre-wrap">${esc(u.notes)}</div>`:'')+
  `<h2>Service history</h2><div class="row"><input id="sd" type="date" value="${new Date().toLocaleDateString('en-CA')}" aria-label="Date"><input id="sb" placeholder="By" value="${esc(localStorage.getItem('hvac-by')||myName())}" aria-label="By"></div>
  <input id="sw" placeholder="What was done (e.g. changed filters)" aria-label="What was done" style="margin-top:8px"><button class="btn" data-act="addSvc" data-id="${id}">＋ Add service entry</button>`+
@@ -90,14 +91,16 @@ function vEdit(id){const u=unit(id);if(!u)return go('#/');setTitle(u._new?'New u
  const filters=(u.filters&&u.filters.length?u.filters:[{size:'',qty:''}]);
  app.innerHTML=`<form id="ef">`+f('tag','Tag','RTU-1')+`<label for="f_type">Unit type</label><select id="f_type" data-k="type"><option value="">—</option>${TYPES.map(t=>`<option${u.type===t?' selected':''}>${t}</option>`).join('')}</select>
  <div id="ct" ${u.type==='Other'?'':'hidden'}>${f('customType','Custom type','e.g. Cooling tower')}</div>`+f('where','Where it is','Roof, mech room 2…')+f('make','Make','Carrier')+f('model','Model')+f('serial','Serial')+f('belts','Belt size(s)','A42, 4L420')+
+ `<div class="row"><div><label for="f_ref">Refrigerant (optional)</label><select id="f_ref"><option value="">—</option>${['R-410A','R-454B','R-32','R-22'].concat(T.cget(u,T.RE_REF)&&!['R-410A','R-454B','R-32','R-22'].includes(T.cget(u,T.RE_REF))?[T.cget(u,T.RE_REF)]:[]).map(r=>`<option${T.cget(u,T.RE_REF)===r?' selected':''}>${esc(r)}</option>`).join('')}</select></div><div><label for="f_chg">Factory charge (optional)</label><input id="f_chg" value="${esc(T.cget(u,T.RE_CHG))}" placeholder="7 lb 6 oz or 118"></div></div>`+
  `<label>Filters (size + qty)</label><div id="fl">${filters.map(fRow).join('')}</div><button type="button" class="btn alt" data-act="addF">＋ Filter size</button>
- <label>Custom fields</label><div id="cl">${(u.custom||[]).map(cRow).join('')}</div><button type="button" class="btn alt" data-act="addC">＋ Custom field</button>
+ <label>Custom fields</label><div id="cl">${(u.custom||[]).filter(c=>!T.RE_REF.test(c.label||'')&&!T.RE_CHG.test(c.label||'')).map(cRow).join('')}</div><button type="button" class="btn alt" data-act="addC">＋ Custom field</button>
  <label for="f_notes">Notes</label><textarea id="f_notes" data-k="notes">${esc(u.notes)}</textarea>
  <button class="btn" type="submit">Save</button><button type="button" class="btn alt" data-act="cancelEdit" data-id="${id}">Cancel</button></form>`;
  $('#f_type').onchange=e=>{$('#ct').hidden=e.target.value!=='Other'};
  $('#ef').onsubmit=e=>{e.preventDefault();app.querySelectorAll('[data-k]').forEach(i=>u[i.dataset.k]=i.value.trim());
   u.filters=[...app.querySelectorAll('.fr')].map(r=>({size:r.children[0].value.trim(),qty:r.children[1].value.trim()})).filter(x=>x.size);
   u.custom=[...app.querySelectorAll('.cr')].map(r=>({label:r.children[0].value.trim(),value:r.children[1].value.trim()})).filter(x=>x.label||x.value);
+  const rv=$('#f_ref').value.trim(),cv=$('#f_chg').value.trim().slice(0,100);if(rv)u.custom.push({label:'Refrigerant',value:rv});if(cv)u.custom.push({label:'Factory charge',value:cv});
   delete u._new;if(draft===u){draft=null;DB.units.push(u)}putUnit(u);toast('Saved');go('#/unit/'+u.id)};
  if(u._new)$('#f_tag').focus()}
 const fRow=x=>`<div class="row fr" style="margin:6px 0"><input value="${esc(x.size)}" placeholder="20x25x2" aria-label="Filter size" style="flex:3"><input value="${esc(x.qty)}" placeholder="Qty" inputmode="numeric" aria-label="Qty"><button type="button" class="mini" data-act="rmRow" style="flex:0">✕</button></div>`;
@@ -148,11 +151,13 @@ app.addEventListener('click',e=>{const t=e.target.closest('[data-go],[data-act],
  if(t.dataset.copy!==undefined){const v=t.dataset.copy;(navigator.clipboard?navigator.clipboard.writeText(v):Promise.reject()).then(()=>toast('Copied'),()=>{const ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();toast('Copied')});return}
  if(t.dataset.go)return go(t.dataset.go);e.preventDefault();A[t.dataset.act]&&A[t.dataset.act](t.dataset.id,t)});
 function render(keep){if(!started)return vGate();const p=location.hash.split('/');if(!keep)window.scrollTo(0,0);
- if(p[1]==='loc')vLoc(p[2]);else if(p[1]==='unit'&&p[3]==='edit')vEdit(p[2]);else if(p[1]==='unit')vUnit(p[2]);else if(p[1]==='print')vPrint(p[2]);else vHome()}
+ if(p[1]==='loc')vLoc(p[2]);else if(p[1]==='unit'&&p[3]==='edit')vEdit(p[2]);else if(p[1]==='unit')vUnit(p[2]);else if(p[1]==='print')vPrint(p[2]);else if(p[1]==='tools')T.render(p);else vHome();
+ document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('on',(p[1]==='tools')===(a.dataset.n==='tools')))}
 window.addEventListener('hashchange',()=>{const p=location.hash.split('/');if(draft&&!(p[1]==='unit'&&p[2]===draft.id))draft=null;render()});
+T.init({app,DB:()=>DB,unit,loc,unitsAt,typeOf,filtStr,esc,go,setTitle,putUnit,toast,myName,uid,natCmp,uCard});
 window.__hvac={importText,get DB(){return DB},get pending(){return pending}};
 // live refresh without wiping a form someone is typing in
-function refresh(){if(!started)return;if(/^#\/loc\//.test(location.hash)&&$('#ulist')){drawList(location.hash.split('/')[2]);return}const a=document.activeElement;if(location.hash.includes('/edit')||(a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&a.value))return;render(true)}
+function refresh(){if(!started)return;if(T.busy())return;if(/^#\/loc\//.test(location.hash)&&$('#ulist')){drawList(location.hash.split('/')[2]);return}const a=document.activeElement;if(location.hash.includes('/edit')||(a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&a.value))return;render(true)}
 // ---- passcode gate + boot ----
 let started=false,me=null,meP=null,gateMsg='';
 function vGate(){setTitle('HVAC Notes');$('#back').style.visibility='hidden';
