@@ -1,4 +1,4 @@
-import {initializeApp,getAuth,signInAnonymously,onAuthStateChanged,connectAuthEmulator,initializeFirestore,persistentLocalCache,persistentMultipleTabManager,collection,doc,setDoc,getDoc,deleteDoc,onSnapshot,writeBatch,serverTimestamp,connectFirestoreEmulator} from './vendor/firebase.js';
+import {initializeApp,getAuth,signInAnonymously,onAuthStateChanged,connectAuthEmulator,initializeFirestore,persistentLocalCache,persistentMultipleTabManager,collection,doc,setDoc,getDoc,deleteDoc,onSnapshot,writeBatch,serverTimestamp,connectFirestoreEmulator,getDocsFromServer,waitForPendingWrites,query,where} from './vendor/firebase.js';
 const CFG={apiKey:'AIzaSyBzDl3H0OzCSFEl-sL1wWjr5s2esUH6fqo',authDomain:'hvac-notes.firebaseapp.com',projectId:'hvac-notes',storageBucket:'hvac-notes.firebasestorage.app',messagingSenderId:'315070304695',appId:'1:315070304695:web:9739e6600647bfc7db5832'};
 const fbApp=initializeApp(CFG),auth=getAuth(fbApp);
 const fdb=initializeFirestore(fbApp,{localCache:persistentLocalCache({tabManager:persistentMultipleTabManager()})});
@@ -26,7 +26,8 @@ const LIM={tag:100,type:60,customType:100,where:300,make:200,model:200,serial:20
 const UF=['tag','type','customType','where','make','model','serial','belts','filters','notes','service','custom'];
 function toDoc(u){const d={locationId:String(u.locId||''),updated:u.updated||now(),updatedAt:serverTimestamp(),updatedBy:String(u.updatedBy??myName()).slice(0,60)};
  UF.forEach(k=>{const v=u[k];d[k]=['filters','service','custom'].includes(k)?(Array.isArray(v)?v.slice(0,LIM[k]):[]):String(v??'').slice(0,LIM[k])});d.locationId=d.locationId.slice(0,64);d.updated=String(d.updated).slice(0,40);return d}
-const fromUnit=s=>{const d=s.data();return{...d,id:s.id,locId:d.locationId}};
+const fromUnit=s=>{const d=s.data();return{...d,id:s.id,locId:d.locationId,_pending:s.metadata.hasPendingWrites}};
+const badge=u=>u._pending?'<span class="st wait">⏳ Waiting to upload</span>':'<span class="st ok">✓ Saved</span>';
 function track(p){pending++;syncStatus();p.catch(e=>{console.error(e);toast(e.code==='permission-denied'?'Not allowed: '+e.code:'Save failed: '+(e.code||e.message))}).finally(()=>{pending--;syncStatus()})}
 function putUnit(u,keepStamp){if(!keepStamp){u.updated=now();u.updatedBy=myName()}track(setDoc(doc(fdb,'units',u.id),toDoc(u)))}
 function putLoc(l,keepStamp){if(!keepStamp)l.updated=now();track(setDoc(doc(fdb,'locations',l.id),{name:String(l.name).slice(0,200),updated:l.updated||now(),updatedAt:serverTimestamp(),updatedBy:myName()}))}
@@ -54,14 +55,14 @@ function vHome(){setTitle('HVAC Notes');
  const q=$('#q');q.oninput=()=>{const s=q.value.trim().toLowerCase();if(!s){$('#res').innerHTML='';return}
   const hits=DB.units.filter(u=>[u.tag,u.model,u.serial,u.make,typeOf(u),u.where,filtStr(u),(u.belts||''),u.notes].join(' ').toLowerCase().includes(s)).sort((a,b)=>natCmp(a.tag,b.tag)).slice(0,50);
   $('#res').innerHTML=hits.length?hits.map(uCard).join(''):'<p class="sub">No matches</p>'};}
-const uCard=u=>`<button class="card" data-go="#/unit/${u.id}"><b>${esc(u.tag||'(no tag)')}</b> <span class="sub">${esc(typeOf(u))}</span><div class="sub">${esc([u.where,u.make,u.model].filter(Boolean).join(' · '))}${loc(u.locId)&&location.hash.length<3?' — '+esc(loc(u.locId).name):''}</div>${filtStr(u)?`<div class="sub">Filters: ${esc(filtStr(u))}</div>`:''}</button>`;
+const uCard=u=>`<button class="card" data-go="#/unit/${u.id}"><b>${esc(u.tag||'(no tag)')}</b> <span class="sub">${esc(typeOf(u))}</span> ${badge(u)}<div class="sub">${esc([u.where,u.make,u.model].filter(Boolean).join(' · '))}${loc(u.locId)&&location.hash.length<3?' — '+esc(loc(u.locId).name):''}</div>${filtStr(u)?`<div class="sub">Filters: ${esc(filtStr(u))}</div>`:''}</button>`;
 function vLoc(id){const l=loc(id);if(!l)return go('#/');setTitle(l.name);const us=unitsAt(id);
  app.innerHTML=`<button class="btn" data-act="addUnit" data-id="${id}">＋ Add unit</button>`+(us.length?us.map(uCard).join(''):'<p class="sub">No units yet. Tap “Add unit” as you walk the building.</p>')+
  `<div class="row"><button class="btn alt" data-act="exportLoc" data-id="${id}">Export / share</button><button class="btn alt" data-go="#/print/${id}">Print / text</button></div>
  <div class="row"><button class="btn alt" data-act="renLoc" data-id="${id}">Rename</button><button class="btn danger" data-act="delLoc" data-id="${id}">Delete</button></div>`}
 function kv(k,v,copy){if(!v)return'';return`<div class="kv"><div class="k">${k}</div><div class="v">${esc(v)}</div>${copy?`<button class="copy" data-copy="${esc(v)}">Copy</button>`:''}</div>`}
 function vUnit(id){const u=unit(id);if(!u)return go('#/');setTitle(u.tag||'Unit');const l=loc(u.locId);
- app.innerHTML=`<button class="btn" data-go="#/unit/${id}/edit">✎ Edit</button><div class="sub">${esc(l?l.name:'')}</div>`+kv('Tag',u.tag,1)+kv('Type',typeOf(u))+kv('Location',u.where)+kv('Make',u.make)+kv('Model',u.model,1)+kv('Serial',u.serial,1)+kv('Belt(s)',u.belts,1)+
+ app.innerHTML=`<button class="btn" data-go="#/unit/${id}/edit">✎ Edit</button><div class="sub">${esc(l?l.name:'')} · ${badge(u)}</div>`+kv('Tag',u.tag,1)+kv('Type',typeOf(u))+kv('Location',u.where)+kv('Make',u.make)+kv('Model',u.model,1)+kv('Serial',u.serial,1)+kv('Belt(s)',u.belts,1)+
  (u.filters||[]).filter(f=>f.size).map(f=>kv('Filter',f.size+(f.qty?'  ×'+f.qty:''),0)).join('')+(u.custom||[]).filter(c=>c.label||c.value).map(c=>kv(esc(c.label),c.value,1)).join('')+
  (u.notes?`<h2>Notes</h2><div style="white-space:pre-wrap">${esc(u.notes)}</div>`:'')+
  `<h2>Service history</h2><div class="row"><input id="sd" type="date" value="${new Date().toLocaleDateString('en-CA')}" aria-label="Date"><input id="sb" placeholder="By" value="${esc(localStorage.getItem('hvac-by')||myName())}" aria-label="By"></div>
@@ -183,3 +184,37 @@ async function firstSync(){LEGACY=await loadLegacy();const miss=legacyMissing();
  refresh()}
 boot();
 if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+
+// ---- Refresh / "did it save?" check (no page reload, never wipes an open form) ----
+const formOpen=()=>{const a=document.activeElement;return location.hash.includes('/edit')||!!(a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&a.id!=='q'&&a.value)};
+const tmo=(p,ms)=>Promise.race([p.then(()=>true),new Promise(r=>setTimeout(()=>r(false),ms))]);
+function rb(cls,msg){const b=$('#rbanner');b.className=cls;b.textContent=msg;b.hidden=false;clearTimeout(rb.t);if(cls!=='busy')rb.t=setTimeout(()=>b.hidden=true,15000)}
+async function swCheck(){try{if(!('serviceWorker'in navigator)||!navigator.onLine)return false;const r=await navigator.serviceWorker.getRegistration();if(!r)return false;
+ await tmo(r.update(),5000);const w=r.installing||r.waiting;if(!w)return false;
+ if(w.state!=='activated')await new Promise(res=>{const t=setTimeout(res,6000);w.addEventListener('statechange',()=>{if(w.state==='activated'){clearTimeout(t);res()}})});return true}catch(e){return false}}
+let rBusy=false;
+async function doRefresh(){if(rBusy)return;
+ if(!started){location.reload();return}
+ const open=formOpen();
+ if(open&&!confirm('You have an edit open that is NOT saved yet.\n\nTap Save first if you want it checked.\n\nCheck the server anyway? (Your typing stays, nothing is reloaded.)'))return;
+ rBusy=true;const btn=$('#refresh');btn.disabled=true;rb('busy','Checking with server…');
+ try{const p=location.hash.split('/');let scope=null;
+  if(p[1]==='loc'||p[1]==='print')scope=p[2];else if(p[1]==='unit'){const u=unit(p[2]);scope=u?u.locId:null}
+  const upd=swCheck();
+  const flushed=navigator.onLine?await tmo(waitForPendingWrites(fdb),8000):false;
+  let srv=null;
+  if(navigator.onLine){try{const q=scope?query(collection(fdb,'units'),where('locationId','==',scope)):collection(fdb,'units');
+   srv=await Promise.race([getDocsFromServer(q),new Promise((_,j)=>setTimeout(()=>j(new Error('timeout')),10000))])}catch(e){console.warn(e);srv=null}}
+  const inScope=u=>!scope||u.locId===scope;
+  const waiting=()=>Math.max(pending,DB.units.filter(u=>u._pending).length);
+  const matches=()=>{const local=DB.units.filter(inScope);if(local.length!==srv.size)return false;const m=new Map(local.map(u=>[u.id,u.updated]));return srv.docs.every(d=>m.get(d.id)===d.data().updated)};
+  if(srv&&!matches())await new Promise(r=>setTimeout(r,1500)); // let live sync catch up
+  if(!open)render(true);
+  const t=new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}),w=waiting(),where_=scope&&loc(scope)?' at '+loc(scope).name:'';
+  if(!srv)rb(w?'bad':'warn',navigator.onLine?`Couldn't reach server${w?' – '+w+' change(s) waiting to upload':''}. Checked ${t}`:`Not saved yet – offline${w?', '+w+' change(s) waiting':''}. They upload when you have signal. Checked ${t}`);
+  else if(w||!flushed)rb('warn',`Not saved yet – ${w||'some'} change(s) waiting (offline / weak signal?). Checked ${t}`);
+  else if(!matches())rb('warn',`Server had newer info – screen updated. ${srv.size} units on server${where_}. Checked ${t}`);
+  else rb('good',`All saved ✓ – ${srv.size} unit${srv.size===1?'':'s'} on server${where_}, checked ${t}`);
+  if(await upd){if(formOpen())rb('warn','New app version ready – save your edit, then tap Refresh again to load it.');else{rb('busy','New app version – loading…');setTimeout(()=>location.reload(),1200)}}
+ }finally{rBusy=false;btn.disabled=false}}
+$('#refresh').onclick=doRefresh;$('#rbanner').onclick=()=>$('#rbanner').hidden=true;
