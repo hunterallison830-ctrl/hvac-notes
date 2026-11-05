@@ -29,12 +29,6 @@ function workBar(){ensureLoc();
  if(u&&wk.locId!==u.locId){wk.locId=u.locId;wkSave()}
  document.documentElement.style.setProperty('--barh',(document.getElementById('bar')?.offsetHeight||64)+'px');
  let h=`<div class="work" id="work"><div class="whead"><b>Working on</b>${(wk.locId||wk.unitId)&&!wk.mode?`<button type="button" class="mini wclr" data-t="wkClear">Clear</button>`:''}</div>`;
- if(wk.mode==='loc'){
-  h+=`<label for="wlq">1. Location</label><input id="wlq" placeholder="Search locations…" value="${E(wk.lq)}" autocomplete="off" aria-label="Search locations">
-  <div id="wll" class="wpick">${locPickList()}</div><button type="button" class="btn alt" data-t="wkMode" data-v="">Cancel</button></div>`;return h}
- if(wk.mode==='unit'){
-  h+=`<div class="sub">At <b>${E(l?l.name:'?')}</b></div><label for="wuq">2. Unit</label><input id="wuq" placeholder="Tag, type, model…" value="${E(wk.uq)}" autocomplete="off" aria-label="Search units">
-  <div id="wul" class="wpick">${unitPickList()}</div><button type="button" class="btn alt" data-t="wkMode" data-v="">Cancel</button></div>`;return h}
  h+=`<button type="button" class="pickbtn" data-t="wkMode" data-v="loc"><span class="plab"><span class="pnum">1</span>${l?`<span class="ch">${E(l.name)}</span>`:`<span class="ph">Location</span>`}</span><span class="pcaret">▾</span></button>`;
  h+=`<button type="button" class="pickbtn" data-t="wkMode" data-v="unit"${l?'':' disabled'}><span class="plab"><span class="pnum">2</span>${u?`<span class="ch">${E(u.tag||'(no tag)')}</span> <span class="sub">${E(X.typeOf(u))}</span>`:`<span class="ph">${l?'Unit':'Pick location first'}</span>`}</span><span class="pcaret">▾</span></button>`;
  if(u){const last=lastSvc(u);
@@ -50,7 +44,11 @@ function workBar(){ensureLoc();
   </div>
   <button type="button" class="mini wopen" data-go="#/unit/${u.id}">Open unit sheet →</button></div>`}
  h+='</div>';return h}
-const paint=html=>{X.app.innerHTML=workBar()+html};
+function sheet(){if(wk.mode!=='loc'&&wk.mode!=='unit')return'';const l=wk.locId&&X.loc(wk.locId),isL=wk.mode==='loc';
+ return`<div class="wsheet" role="dialog" aria-modal="true" aria-label="${isL?'Pick location':'Pick unit'}"><div class="wshead"><div class="wsrow"><button type="button" class="mini wscancel" data-t="wkMode" data-v="">Cancel</button><b class="wstitle">${isL?'1. Location':'2. Unit'+(l?' · '+E(l.name):'')}</b>${isL?'':`<button type="button" class="mini wscancel" data-t="wkMode" data-v="loc">Site</button>`}</div>
+ ${isL?`<input id="wlq" type="search" enterkeyhint="search" placeholder="Search locations…" value="${E(wk.lq)}" autocomplete="off" aria-label="Search locations">`:`<input id="wuq" type="search" enterkeyhint="search" placeholder="Tag, type, model…" value="${E(wk.uq)}" autocomplete="off" aria-label="Search units">`}</div>
+ <div id="${isL?'wll':'wul'}" class="wsbody">${isL?locPickList():unitPickList()}</div></div>`}
+const paint=html=>{X.app.innerHTML=workBar()+html+sheet();document.body.classList.toggle('sheet-open',!!wk.mode)};
 export const cget=(u,re)=>((u.custom||[]).find(c=>re.test(c.label||''))||{}).value||'';
 export const RE_REF=/^refrigerant$/i,RE_CHG=/^factory charge/i;
 export function refId(s){s=String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');return s.includes('410')?'r410a':s.includes('454')?'r454b':/^r?32$/.test(s)?'r32':/^r?22$/.test(s)?'r22':''}
@@ -72,7 +70,7 @@ export function unitSummary(u,sym){const l=X.loc(u.locId),last=(u.service||[]).s
  last.length&&'Recent service:\n'+last.map(s=>'- '+s.date+' '+s.what).join('\n')].filter(Boolean).join('\n')}
 function copyText(v){return (navigator.clipboard?navigator.clipboard.writeText(v):Promise.reject()).catch(()=>{const ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();try{document.execCommand('copy')}catch(e){}ta.remove()})}
 
-export function init(ctx){X=ctx;X.app.addEventListener('click',onClick);X.app.addEventListener('input',onInput);X.app.addEventListener('change',onInput)}
+export function init(ctx){X=ctx;addEventListener('hashchange',()=>{if(!location.hash.startsWith('#/tools')){wk.mode='';document.body.classList.remove('sheet-open')}});X.app.addEventListener('click',onClick);X.app.addEventListener('input',onInput);X.app.addEventListener('change',onInput)}
 export const busy=()=>/^#\/tools\/(charge|ts|lineset)/.test(location.hash);
 export function render(p){const v=p[2]||'';
  // Keep Working-on in sync when a unit is opened via Service call / Charge deep link
@@ -213,6 +211,7 @@ function setPath(f,v,el){const [a,k]=f.split('.'),o=st[a];if(k==='done'){const d
 function rerender(keepId){const a=document.activeElement,id=keepId||(a&&a.id),pos=a&&a.selectionStart,y=scrollY;render(location.hash.split('/'));scrollTo(0,y);
  if(id){const e=document.getElementById(id);if(e){e.focus();try{e.setSelectionRange(pos,pos)}catch(_){}}}}
 function onInput(e){const el=e.target;if(!location.hash.startsWith('#/tools'))return;
+ if((el.id==='wlq'||el.id==='wuq')&&e.type!=='input')return;
  if(el.id==='wlq'){wk.lq=el.value;const b=document.getElementById('wll');if(b)b.innerHTML=locPickList();return}
  if(el.id==='wuq'){wk.uq=el.value;const b=document.getElementById('wul');if(b)b.innerHTML=unitPickList();return}
  if(el.id==='tq'){st.q=el.value;drawTq();return}if(el.id==='gq'){st.gq=el.value;drawGuides();return}
@@ -221,9 +220,9 @@ function onInput(e){const el=e.target;if(!location.hash.startsWith('#/tools'))re
  if(el.tagName==='SELECT'&&e.type!=='change')return;if(el.tagName==='INPUT'&&e.type==='change')return;setPath(f,el.value,el);rerender()}
 function onClick(e){const t=e.target.closest('[data-t]');if(!t||!location.hash.startsWith('#/tools'))return;e.preventDefault();const a=t.dataset.t;
  if(a==='set'){setPath(t.dataset.f,t.dataset.v,t);rerender();return}
- if(a==='wkMode'){wk.mode=t.dataset.v||'';wk.lq='';wk.uq='';rerender();const id=wk.mode==='loc'?'wlq':wk.mode==='unit'?'wuq':'';if(id)requestAnimationFrame(()=>document.getElementById(id)?.focus());return}
+ if(a==='wkMode'){wk.mode=t.dataset.v||'';wk.lq='';wk.uq='';const id=wk.mode==='loc'?'wlq':wk.mode==='unit'?'wuq':'';rerender(id||'__none');if(id){const el=document.getElementById(id);el?.focus();const bd=document.querySelector('.wsbody');if(bd)bd.scrollTop=0}return}
  if(a==='wkClear'){wk.locId='';wk.unitId='';wk.mode='';wk.lq='';wk.uq='';wkSave();rerender();return}
- if(a==='wkLoc'){wk.locId=t.dataset.v;if(wk.unitId){const cu=X.unit(wk.unitId);if(!cu||cu.locId!==wk.locId)wk.unitId=''}wk.mode='unit';wk.uq='';wkSave();rerender();requestAnimationFrame(()=>document.getElementById('wuq')?.focus());return}
+ if(a==='wkLoc'){wk.locId=t.dataset.v;if(wk.unitId){const cu=X.unit(wk.unitId);if(!cu||cu.locId!==wk.locId)wk.unitId=''}wk.mode='unit';wk.uq='';wkSave();rerender('wuq');document.getElementById('wuq')?.focus();return}
  if(a==='wkUnit'){const u=X.unit(t.dataset.v);if(!u)return;wkSetUnit(u);Object.assign(st.ts,{unit:u.id,eq:eqFor(u)});rerender();return}
  if(a==='wkAi'){const u=X.unit(wk.unitId);if(!u)return;copyText(unitSummary(u));X.toast('Unit summary copied — paste into FieldBench');window.open(FB_TS,'_blank','noopener');return}
  if(a==='ai'){const u=(st.ts.unit&&location.hash.startsWith('#/tools/ts/')&&X.unit(st.ts.unit))||(wk.unitId&&X.unit(wk.unitId));const sym=u&&st.ts.unit===u.id&&(SYMPTOMS.find(x=>x.id===st.ts.sym)||{}).name;

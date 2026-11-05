@@ -1,5 +1,5 @@
-// hvac-v8: network-first for this site's files (always fresh when online), cache fallback when offline.
-const V='v8',C='hvac-'+V,F=['./','index.html','style.css?v=8','app.js?v=8','tools.js?v=8','vendor/fb-catalog.js','vendor/fb-charge.js','vendor/firebase.js','manifest.webmanifest','icon-192.png','icon-512.png'];
+// hvac-v9: network-first for this site's files (always fresh when online), cache fallback when offline.
+const V='v9',C='hvac-'+V,F=['./','index.html','style.css?v=9','app.js?v=9','tools.js?v=9','vendor/fb-catalog.js','vendor/fb-charge.js','vendor/firebase.js','manifest.webmanifest','icon-192.png','icon-512.png'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>Promise.all(F.map(u=>fetch(u,{cache:'reload'}).then(r=>r.ok&&c.put(u,r)).catch(()=>{})))))});
 // Pages from older caches can't reload themselves, so the first v8 activation reloads them once.
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(async k=>{const legacy=k.some(x=>/^hvac-v([1-7]|7t)$/.test(x));await Promise.all(k.filter(x=>x!==C).map(x=>caches.delete(x)));await self.clients.claim();

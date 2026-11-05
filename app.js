@@ -1,5 +1,5 @@
 import {initializeApp,getAuth,signInAnonymously,onAuthStateChanged,connectAuthEmulator,initializeFirestore,persistentLocalCache,persistentMultipleTabManager,collection,doc,setDoc,getDoc,deleteDoc,onSnapshot,writeBatch,serverTimestamp,connectFirestoreEmulator,getDocsFromServer,waitForPendingWrites,query,where} from './vendor/firebase.js';
-import * as T from './tools.js?v=8';
+import * as T from './tools.js?v=9';
 const CFG={apiKey:'AIzaSyBzDl3H0OzCSFEl-sL1wWjr5s2esUH6fqo',authDomain:'hvac-notes.firebaseapp.com',projectId:'hvac-notes',storageBucket:'hvac-notes.firebasestorage.app',messagingSenderId:'315070304695',appId:'1:315070304695:web:9739e6600647bfc7db5832'};
 const fbApp=initializeApp(CFG),auth=getAuth(fbApp);
 const fdb=initializeFirestore(fbApp,{localCache:persistentLocalCache({tabManager:persistentMultipleTabManager()})});
@@ -305,7 +305,7 @@ async function firstSync(){LEGACY=await loadLegacy();const miss=legacyMissing();
 boot();
 // ---- Auto-update (v8) ----
 if('serviceWorker'in navigator){const sw=navigator.serviceWorker;let hadCtl=!!sw.controller,reloading=false;
- sw.register('sw.js?v=8',{updateViaCache:'none'}).then(r=>{const up=()=>{if(navigator.onLine)r.update().catch(()=>{})};up();
+ sw.register('sw.js?v=9',{updateViaCache:'none'}).then(r=>{const up=()=>{if(navigator.onLine)r.update().catch(()=>{})};up();
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')up()});addEventListener('focus',up);addEventListener('online',up);
   if(r.waiting)r.waiting.postMessage('skip')}).catch(()=>{});
  sw.addEventListener('controllerchange',()=>{if(!hadCtl){hadCtl=true;return}if(reloading)return;

@@ -67,7 +67,7 @@ a{color:#ffd400}
 #typehint{margin:16px 0;padding:12px;background:#1b1b00;border:2px dashed #665c00;border-radius:12px}
 
 /* Working-on picker (Tools) */
-.work{position:sticky;top:var(--barh,64px);z-index:4;background:#0d0d00;border:2px solid #665c00;border-radius:12px;padding:10px;margin:0 0 12px}
+.work{position:relative;background:#0d0d00;border:2px solid #665c00;border-radius:12px;padding:10px;margin:0 0 12px}
 .work .whead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
 .work .whead b{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#ffd400}
 .work .wclr{color:#ffd400;border-color:#665c00;min-height:36px;padding:4px 10px;font-size:14px}
@@ -81,3 +81,15 @@ a{color:#ffd400}
 .wacts{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px}
 .wacts .btn{min-height:48px;margin:0;font-size:15px;padding:8px}
 .wopen{margin-top:8px;color:#ffd400;border-color:#665c00;background:#1b1b00;width:100%}
+
+/* v9: full-screen picker sheet */
+.wsheet{position:fixed;inset:0;z-index:50;display:flex;flex-direction:column;background:#000;overscroll-behavior:contain}
+.wshead{flex:0 0 auto;padding:10px 12px 8px;padding-top:max(10px,env(safe-area-inset-top));background:#111;border-bottom:2px solid #ffd400}
+.wsrow{display:flex;align-items:center;gap:8px;margin-bottom:8px}.wstitle{flex:1;min-width:0;color:#ffd400;font-size:17px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wscancel{min-height:44px;padding:6px 14px;font-size:16px;color:#ffd400;border-color:#665c00;flex:0 0 auto}
+.wshead input{margin:0;width:100%;box-sizing:border-box;font-size:17px}
+.wsbody{flex:1 1 auto;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:6px 12px calc(16px + env(safe-area-inset-bottom))}
+.wsbody .card{min-height:52px;margin:6px 0;padding:10px;width:100%;box-sizing:border-box}
+body.sheet-open{overflow:hidden}body.sheet-open #nav{display:none}
+html,body{overflow-x:hidden}
+input,select,textarea,label{scroll-margin-top:calc(var(--barh,64px) + 16px)}
