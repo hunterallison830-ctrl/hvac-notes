@@ -1,11 +1,31 @@
 import {initializeApp,getAuth,signInAnonymously,onAuthStateChanged,connectAuthEmulator,initializeFirestore,persistentLocalCache,persistentMultipleTabManager,collection,doc,setDoc,getDoc,deleteDoc,onSnapshot,writeBatch,serverTimestamp,connectFirestoreEmulator,getDocsFromServer,waitForPendingWrites,query,where} from './vendor/firebase.js';
-import * as T from './tools.js?v=7';
+import * as T from './tools.js?v=8';
 const CFG={apiKey:'AIzaSyBzDl3H0OzCSFEl-sL1wWjr5s2esUH6fqo',authDomain:'hvac-notes.firebaseapp.com',projectId:'hvac-notes',storageBucket:'hvac-notes.firebasestorage.app',messagingSenderId:'315070304695',appId:'1:315070304695:web:9739e6600647bfc7db5832'};
 const fbApp=initializeApp(CFG),auth=getAuth(fbApp);
 const fdb=initializeFirestore(fbApp,{localCache:persistentLocalCache({tabManager:persistentMultipleTabManager()})});
 // test hook: ?emu=1 on localhost talks to the local Firebase emulators
 if(/^(localhost|127\.0\.0\.1)$/.test(location.hostname)&&new URLSearchParams(location.search).get('emu')){connectAuthEmulator(auth,'http://127.0.0.1:9099',{disableWarnings:true});connectFirestoreEmulator(fdb,'127.0.0.1',8080)}
 const TYPES=['RTU','AHU','Split/Condenser','Furnace','Boiler','Chiller','Exhaust Fan','MAU','VAV','Other'];
+// Type-first form: which fields apply to each unit type
+const CF_LABELS={lineset:'Lineset size/length',gasBtu:'Gas type / BTU',motorHp:'Motor HP',damper:'Damper / size',tons:'Tons',fuel:'Fuel',inputBtu:'Input BTU / MBH',piping:'Supply/return / piping'};
+const CF_KEYS=Object.keys(CF_LABELS);
+const CF_RE={ref:/^refrigerant$/i,chg:/^factory charge/i,lineset:/^lineset/i,gasBtu:/^gas type/i,motorHp:/^motor hp/i,damper:/^damper/i,tons:/^tons$/i,fuel:/^fuel$/i,inputBtu:/^input btu/i,piping:/^(supply\/return|piping)/i};
+const TYPE_SPEC={
+ 'RTU':{belts:1,filters:1,ref:1,chg:1},
+ 'AHU':{belts:1,filters:1,ref:1,chg:1},
+ 'MAU':{belts:1,filters:1,ref:1,chg:1},
+ 'Split/Condenser':{filters:1,ref:1,chg:1,lineset:1},
+ 'Furnace':{filters:1,gasBtu:1,ref:1},
+ 'Exhaust Fan':{belts:1,motorHp:1},
+ 'VAV':{damper:1},
+ 'Chiller':{ref:1,chg:1,tons:1},
+ 'Boiler':{fuel:1,inputBtu:1,piping:1},
+ 'Other':{belts:1,filters:1,ref:1,chg:1}
+};
+const specOf=t=>TYPE_SPEC[t]||null;
+const cgetL=(u,re)=>((u.custom||[]).find(c=>re.test(c.label||''))||{}).value||'';
+const isManagedCustom=c=>Object.values(CF_RE).some(re=>re.test(c.label||''));
+
 const $=s=>document.querySelector(s),app=$('#app');
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 const now=()=>new Date().toISOString();
@@ -87,22 +107,101 @@ function vUnit(id){const u=unit(id);if(!u)return go('#/');setTitle(u.tag||'Unit'
  (u.service||[]).slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(s=>`<div class="svc"><b>${esc(s.date)}</b> — ${esc(s.by||'')}<div>${esc(s.what)}</div><button class="mini" data-act="delSvc" data-id="${id}" data-s="${s.id}">Delete</button></div>`).join('')+
  `<div class="row" style="margin-top:16px"><button class="btn alt" data-act="dupUnit" data-id="${id}">Duplicate</button><button class="btn danger" data-act="delUnit" data-id="${id}">Delete unit</button></div><p class="sub">Updated ${u.updated?new Date(u.updated).toLocaleString():''}${u.updatedBy?' · edited by '+esc(u.updatedBy):''}</p>`}
 function vEdit(id){const u=unit(id);if(!u)return go('#/');setTitle(u._new?'New unit':'Edit '+(u.tag||'unit'));
- const f=(k,lab,ph='')=>`<label for="f_${k}">${lab}</label><input id="f_${k}" data-k="${k}" value="${esc(u[k])}" placeholder="${ph}" autocapitalize="characters">`;
- const filters=(u.filters&&u.filters.length?u.filters:[{size:'',qty:''}]);
- app.innerHTML=`<form id="ef">`+f('tag','Tag','RTU-1')+`<label for="f_type">Unit type</label><select id="f_type" data-k="type"><option value="">—</option>${TYPES.map(t=>`<option${u.type===t?' selected':''}>${t}</option>`).join('')}</select>
- <div id="ct" ${u.type==='Other'?'':'hidden'}>${f('customType','Custom type','e.g. Cooling tower')}</div>`+f('where','Where it is','Roof, mech room 2…')+f('make','Make','Carrier')+f('model','Model')+f('serial','Serial')+f('belts','Belt size(s)','A42, 4L420')+
- `<div class="row"><div><label for="f_ref">Refrigerant (optional)</label><select id="f_ref"><option value="">—</option>${['R-410A','R-454B','R-32','R-22'].concat(T.cget(u,T.RE_REF)&&!['R-410A','R-454B','R-32','R-22'].includes(T.cget(u,T.RE_REF))?[T.cget(u,T.RE_REF)]:[]).map(r=>`<option${T.cget(u,T.RE_REF)===r?' selected':''}>${esc(r)}</option>`).join('')}</select></div><div><label for="f_chg">Factory charge (optional)</label><input id="f_chg" value="${esc(T.cget(u,T.RE_CHG))}" placeholder="7 lb 6 oz or 118"></div></div>`+
- `<label>Filters (size + qty)</label><div id="fl">${filters.map(fRow).join('')}</div><button type="button" class="btn alt" data-act="addF">＋ Filter size</button>
- <label>Custom fields</label><div id="cl">${(u.custom||[]).filter(c=>!T.RE_REF.test(c.label||'')&&!T.RE_CHG.test(c.label||'')).map(cRow).join('')}</div><button type="button" class="btn alt" data-act="addC">＋ Custom field</button>
- <label for="f_notes">Notes</label><textarea id="f_notes" data-k="notes">${esc(u.notes)}</textarea>
- <button class="btn" type="submit">Save</button><button type="button" class="btn alt" data-act="cancelEdit" data-id="${id}">Cancel</button></form>`;
- $('#f_type').onchange=e=>{$('#ct').hidden=e.target.value!=='Other'};
- $('#ef').onsubmit=e=>{e.preventDefault();app.querySelectorAll('[data-k]').forEach(i=>u[i.dataset.k]=i.value.trim());
-  u.filters=[...app.querySelectorAll('.fr')].map(r=>({size:r.children[0].value.trim(),qty:r.children[1].value.trim()})).filter(x=>x.size);
-  u.custom=[...app.querySelectorAll('.cr')].map(r=>({label:r.children[0].value.trim(),value:r.children[1].value.trim()})).filter(x=>x.label||x.value);
-  const rv=$('#f_ref').value.trim(),cv=$('#f_chg').value.trim().slice(0,100);if(rv)u.custom.push({label:'Refrigerant',value:rv});if(cv)u.custom.push({label:'Factory charge',value:cv});
+ const f=(k,lab,ph='')=>`<label for="f_${k}">${lab}</label><input id="f_${k}" data-k="${k}" value="${esc(u[k]||'')}" placeholder="${ph}" autocapitalize="characters">`;
+ const refOpts=['R-410A','R-454B','R-32','R-22'];
+ const fuelOpts=['Gas','Oil','Electric','Other'];
+ function curRef(){return cgetL(u,CF_RE.ref)||T.cget(u,T.RE_REF)}
+ function curChg(){return cgetL(u,CF_RE.chg)||T.cget(u,T.RE_CHG)}
+ function fieldsHtml(type){
+  const sp=specOf(type);if(!sp)return`<p class="sub" id="typehint">Pick a unit type above — then the right fields show up for that equipment.</p>`;
+  const filters=(u.filters&&u.filters.length?u.filters:[{size:'',qty:''}]);
+  const cr=curRef(),cc=curChg(),cf=cgetL(u,CF_RE.fuel);
+  let h=`<div id="typefields">`+f('tag','Tag',type==='Boiler'?'B-1':type==='Exhaust Fan'?'EF-1':(type.split('/')[0]+'-1'))+f('where','Where it is','Roof, mech room 2…')+f('make','Make','Carrier')+f('model','Model')+f('serial','Serial');
+  if(sp.belts)h+=f('belts','Belt size(s)','A42, 4L420');
+  if(sp.filters)h+=`<label>Filters (size + qty)</label><div id="fl">${filters.map(fRow).join('')}</div><button type="button" class="btn alt" data-act="addF">＋ Filter size</button>`;
+  if(sp.ref||sp.chg){h+=`<div class="row">`;
+   if(sp.ref)h+=`<div><label for="f_ref">Refrigerant${type==='Furnace'?' (optional, heat pump)':' (optional)'}</label><select id="f_ref"><option value="">—</option>${refOpts.concat(cr&&!refOpts.includes(cr)?[cr]:[]).map(r=>`<option${cr===r?' selected':''}>${esc(r)}</option>`).join('')}</select></div>`;
+   if(sp.chg)h+=`<div><label for="f_chg">Factory charge (optional)</label><input id="f_chg" value="${esc(cc)}" placeholder="7 lb 6 oz or 118"></div>`;
+   h+=`</div>`}
+  if(sp.lineset)h+=`<label for="f_lineset">${CF_LABELS.lineset} (optional)</label><input id="f_lineset" value="${esc(cgetL(u,CF_RE.lineset))}" placeholder='3/8" × 50 ft'>`;
+  if(sp.gasBtu)h+=`<label for="f_gasBtu">${CF_LABELS.gasBtu} (optional)</label><input id="f_gasBtu" value="${esc(cgetL(u,CF_RE.gasBtu))}" placeholder="Natural gas · 80k BTU">`;
+  if(sp.motorHp)h+=`<label for="f_motorHp">${CF_LABELS.motorHp} (optional)</label><input id="f_motorHp" value="${esc(cgetL(u,CF_RE.motorHp))}" placeholder="1.5 HP">`;
+  if(sp.damper)h+=`<label for="f_damper">${CF_LABELS.damper} (optional)</label><input id="f_damper" value="${esc(cgetL(u,CF_RE.damper))}" placeholder='12" round · zone 3'>`;
+  if(sp.tons)h+=`<label for="f_tons">${CF_LABELS.tons} (optional)</label><input id="f_tons" value="${esc(cgetL(u,CF_RE.tons))}" placeholder="40" inputmode="decimal">`;
+  if(sp.fuel)h+=`<label for="f_fuel">${CF_LABELS.fuel}</label><select id="f_fuel"><option value="">—</option>${fuelOpts.map(x=>`<option${cf===x?' selected':''}>${x}</option>`).join('')}${cf&&!fuelOpts.includes(cf)?`<option selected>${esc(cf)}</option>`:''}</select>`;
+  if(sp.inputBtu)h+=`<label for="f_inputBtu">${CF_LABELS.inputBtu} (optional)</label><input id="f_inputBtu" value="${esc(cgetL(u,CF_RE.inputBtu))}" placeholder="1500 MBH">`;
+  if(sp.piping)h+=`<label for="f_piping">${CF_LABELS.piping} (optional)</label><input id="f_piping" value="${esc(cgetL(u,CF_RE.piping))}" placeholder="180°F supply / 160°F return">`;
+  const freeCustom=(u.custom||[]).filter(c=>(c.label||c.value)&&!isManagedCustom(c));
+  h+=`<label>Custom fields</label><div id="cl">${freeCustom.map(cRow).join('')}</div><button type="button" class="btn alt" data-act="addC">＋ Custom field</button>`;
+  h+=`<label for="f_notes">Notes</label><textarea id="f_notes" data-k="notes">${esc(u.notes||'')}</textarea></div>`;
+  return h}
+ app.innerHTML=`<form id="ef"><label for="f_type">Unit type <span class="sub">(required)</span></label>
+ <select id="f_type" data-k="type" required><option value="">— Select type —</option>${TYPES.map(t=>`<option${u.type===t?' selected':''}>${t}</option>`).join('')}</select>
+ <div id="ct" ${u.type==='Other'?'':'hidden'}>${f('customType','Custom type','e.g. Cooling tower')}</div>
+ <div id="dyn">${fieldsHtml(u.type||'')}</div>
+ <button class="btn" type="submit"${u.type?'':' disabled'} id="savebtn">Save</button>
+ <button type="button" class="btn alt" data-act="cancelEdit" data-id="${id}">Cancel</button></form>`;
+ function remount(type,prevType){
+  const keep={};app.querySelectorAll('[data-k]').forEach(i=>{if(['tag','where','make','model','serial','notes','customType'].includes(i.dataset.k))keep[i.dataset.k]=i.value});
+  // also pull visible managed values into u.custom before remount so switching away & back keeps them if still applicable
+  const stash=[];
+  const grab=(lab,sel)=>{const el=$(sel);if(el&&el.value.trim())stash.push({label:lab,value:el.value.trim()})};
+  grab('Refrigerant','#f_ref');grab('Factory charge','#f_chg');
+  CF_KEYS.forEach(k=>grab(CF_LABELS[k],'#f_'+k));
+  if($('#fl'))u.filters=[...app.querySelectorAll('.fr')].map(r=>({size:r.children[0].value.trim(),qty:r.children[1].value.trim()})).filter(x=>x.size);
+  const free=[...app.querySelectorAll('.cr')].map(r=>({label:r.children[0].value.trim(),value:r.children[1].value.trim()})).filter(x=>x.label||x.value);
+  Object.assign(u,keep);u.type=type;
+  const sp=specOf(type)||{};
+  // rebuild custom: free + stash that still apply
+  const keepKeys=new Set();
+  if(sp.ref)keepKeys.add('ref');if(sp.chg)keepKeys.add('chg');
+  CF_KEYS.forEach(k=>{if(sp[k])keepKeys.add(k)});
+  const fromStash=stash.filter(c=>{
+   if(CF_RE.ref.test(c.label))return keepKeys.has('ref');
+   if(CF_RE.chg.test(c.label))return keepKeys.has('chg');
+   return CF_KEYS.some(k=>keepKeys.has(k)&&CF_RE[k].test(c.label));
+  });
+  // also keep previously saved managed that still apply and weren't on screen
+  const prevManaged=(u.custom||[]).filter(c=>isManagedCustom(c)).filter(c=>{
+   if(fromStash.some(s=>s.label.toLowerCase()===c.label.toLowerCase()))return false;
+   if(CF_RE.ref.test(c.label||''))return keepKeys.has('ref');
+   if(CF_RE.chg.test(c.label||''))return keepKeys.has('chg');
+   return CF_KEYS.some(k=>keepKeys.has(k)&&CF_RE[k].test(c.label||''));
+  });
+  u.custom=[...free.filter(c=>!isManagedCustom(c)),...fromStash,...prevManaged];
+  if(!sp.belts){const bel=$('#f_belts');if(bel)u.belts=bel.value; /* keep in memory until cleared */}
+  if(specOf(prevType)&&specOf(prevType).belts&&!sp.belts)u.belts='';
+  else if($('#f_belts'))u.belts=$('#f_belts').value;
+  if(specOf(prevType)&&specOf(prevType).filters&&!sp.filters)u.filters=[];
+  $('#dyn').innerHTML=fieldsHtml(type);
+  $('#ct').hidden=type!=='Other';
+  $('#savebtn').disabled=!type;
+  if(type&&$('#f_tag'))$('#f_tag').focus()}
+ $('#f_type').onchange=e=>{const prev=u.type;remount(e.target.value,prev)};
+ $('#ef').onsubmit=e=>{e.preventDefault();
+  if(!$('#f_type').value){toast('Pick a unit type first');$('#f_type').focus();return}
+  const type=$('#f_type').value;u.type=type;const sp=specOf(type)||{};
+  app.querySelectorAll('[data-k]').forEach(i=>u[i.dataset.k]=i.value.trim());
+  if(!sp.belts)u.belts='';
+  if(sp.filters)u.filters=[...app.querySelectorAll('.fr')].map(r=>({size:r.children[0].value.trim(),qty:r.children[1].value.trim()})).filter(x=>x.size);
+  else u.filters=[];
+  const free=[...app.querySelectorAll('.cr')].map(r=>({label:r.children[0].value.trim(),value:r.children[1].value.trim()})).filter(x=>x.label||x.value);
+  const managed=[];
+  const push=(lab,el)=>{const v=el&&el.value?el.value.trim().slice(0,200):'';if(v)managed.push({label:lab,value:v})};
+  if(sp.ref)push('Refrigerant',$('#f_ref'));
+  if(sp.chg)push('Factory charge',$('#f_chg'));
+  if(sp.lineset)push(CF_LABELS.lineset,$('#f_lineset'));
+  if(sp.gasBtu)push(CF_LABELS.gasBtu,$('#f_gasBtu'));
+  if(sp.motorHp)push(CF_LABELS.motorHp,$('#f_motorHp'));
+  if(sp.damper)push(CF_LABELS.damper,$('#f_damper'));
+  if(sp.tons)push(CF_LABELS.tons,$('#f_tons'));
+  if(sp.fuel)push(CF_LABELS.fuel,$('#f_fuel'));
+  if(sp.inputBtu)push(CF_LABELS.inputBtu,$('#f_inputBtu'));
+  if(sp.piping)push(CF_LABELS.piping,$('#f_piping'));
+  u.custom=[...free.filter(c=>!isManagedCustom(c)),...managed];
   delete u._new;if(draft===u){draft=null;DB.units.push(u)}putUnit(u);toast('Saved');go('#/unit/'+u.id)};
- if(u._new)$('#f_tag').focus()}
+ if(u._new&&u.type&&$('#f_tag'))$('#f_tag').focus();
+ else if(u._new)$('#f_type').focus()}
 const fRow=x=>`<div class="row fr" style="margin:6px 0"><input value="${esc(x.size)}" placeholder="20x25x2" aria-label="Filter size" style="flex:3"><input value="${esc(x.qty)}" placeholder="Qty" inputmode="numeric" aria-label="Qty"><button type="button" class="mini" data-act="rmRow" style="flex:0">✕</button></div>`;
 const cRow=x=>`<div class="row cr" style="margin:6px 0"><input value="${esc(x.label)}" placeholder="Label (e.g. Voltage)"><input value="${esc(x.value)}" placeholder="Value"><button type="button" class="mini" data-act="rmRow" style="flex:0">✕</button></div>`;
 function vPrint(id){const l=loc(id);if(!l)return go('#/');setTitle('Print: '+l.name);const txt=locText(l);
@@ -204,9 +303,9 @@ async function firstSync(){LEGACY=await loadLegacy();const miss=legacyMissing();
  if(!DB.locations.length)putLoc({id:'jewish-academy-atlanta',name:'Jewish Academy Atlanta'});
  refresh()}
 boot();
-// ---- Auto-update (v7) ----
+// ---- Auto-update (v8) ----
 if('serviceWorker'in navigator){const sw=navigator.serviceWorker;let hadCtl=!!sw.controller,reloading=false;
- sw.register('sw.js?v=7',{updateViaCache:'none'}).then(r=>{const up=()=>{if(navigator.onLine)r.update().catch(()=>{})};up();
+ sw.register('sw.js?v=8',{updateViaCache:'none'}).then(r=>{const up=()=>{if(navigator.onLine)r.update().catch(()=>{})};up();
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')up()});addEventListener('focus',up);addEventListener('online',up);
   if(r.waiting)r.waiting.postMessage('skip')}).catch(()=>{});
  sw.addEventListener('controllerchange',()=>{if(!hadCtl){hadCtl=true;return}if(reloading)return;

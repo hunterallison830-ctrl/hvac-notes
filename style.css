@@ -62,3 +62,22 @@ a{color:#ffd400}
 @media print{#nav{display:none}}
 .chk{font-weight:400;color:#fff}.chk b{color:#ffd400}
 #ver{font-size:.7em;opacity:.6;margin-left:.4em;align-self:center}
+
+#savebtn:disabled{opacity:.45;cursor:not-allowed}
+#typehint{margin:16px 0;padding:12px;background:#1b1b00;border:2px dashed #665c00;border-radius:12px}
+
+/* Working-on picker (Tools) */
+.work{position:sticky;top:var(--barh,64px);z-index:4;background:#0d0d00;border:2px solid #665c00;border-radius:12px;padding:10px;margin:0 0 12px}
+.work .whead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.work .whead b{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#ffd400}
+.work .wclr{color:#ffd400;border-color:#665c00;min-height:36px;padding:4px 10px;font-size:14px}
+.pickbtn{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:52px;margin:4px 0;padding:10px 12px;background:#141414;color:#fff;border:2px solid #444;border-radius:10px;font-size:17px;font-weight:700;text-align:left}
+.pickbtn:disabled{opacity:.45}.pickbtn .plab{display:flex;align-items:center;gap:8px;flex:1;min-width:0;flex-wrap:wrap}
+.pickbtn .pnum{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:999px;background:#332b00;color:#ffd400;font-size:13px;flex:0 0 22px}
+.pickbtn .ch{color:#ffd400}.pickbtn .ph{color:#888;font-weight:600}.pickbtn .pcaret{color:#888;flex:0 0 auto}
+.wpick{max-height:50vh;overflow:auto;margin:6px 0}.wpick .card{min-height:52px;margin:4px 0;padding:10px}
+.wcard{margin-top:8px;padding-top:10px;border-top:1px solid #333}
+.wcard .wtop{font-size:17px;margin-bottom:2px}
+.wacts{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px}
+.wacts .btn{min-height:48px;margin:0;font-size:15px;padding:8px}
+.wopen{margin-top:8px;color:#ffd400;border-color:#665c00;background:#1b1b00;width:100%}
