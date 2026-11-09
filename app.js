@@ -1,7 +1,15 @@
 import {initializeApp,getAuth,signInAnonymously,onAuthStateChanged,connectAuthEmulator,initializeFirestore,persistentLocalCache,persistentMultipleTabManager,collection,doc,setDoc,getDoc,deleteDoc,onSnapshot,writeBatch,serverTimestamp,connectFirestoreEmulator,getDocsFromServer,waitForPendingWrites,query,where} from './vendor/firebase.js';
-import * as T from './tools.js?v=10';
-import {mountScanButton,isScanBusy,cancelScan} from './scan.js?v=10';
-const LOCAL=new URLSearchParams(location.search).has('local')||location.hash==='#local';
+import * as T from './tools.js?v=11';
+// Scan is lazy-loaded so Locations/home boot never depends on OCR modules.
+let scanApi={mountScanButton(){},isScanBusy:()=>false,cancelScan(){},_loaded:false};
+async function loadScan(){
+  if(scanApi._loaded)return scanApi;
+  try{const m=await import('./scan.js?v=11');scanApi={mountScanButton:m.mountScanButton,isScanBusy:m.isScanBusy,cancelScan:m.cancelScan,_loaded:true}}
+  catch(e){console.error(e);scanApi._loaded=true;try{toast('Scan feature unavailable on this device')}catch(_){}}
+  return scanApi
+}
+// LOCAL synthetic preview: localhost ONLY + local=1. Never on GitHub Pages / production host.
+const LOCAL=/^(localhost|127\.0\.0\.1)$/.test(location.hostname)&&new URLSearchParams(location.search).get('local')==='1';
 const CFG={apiKey:'AIzaSyBzDl3H0OzCSFEl-sL1wWjr5s2esUH6fqo',authDomain:'hvac-notes.firebaseapp.com',projectId:'hvac-notes',storageBucket:'hvac-notes.firebasestorage.app',messagingSenderId:'315070304695',appId:'1:315070304695:web:9739e6600647bfc7db5832'};
 let fbApp=null,auth=null,fdb=null;
 if(!LOCAL){
@@ -184,7 +192,7 @@ function vEdit(id){const u=unit(id);if(!u)return go('#/');setTitle(u._new?'New u
   $('#ct').hidden=type!=='Other';
   $('#savebtn').disabled=!type;
   if(type&&$('#f_tag'))$('#f_tag').focus()}
- mountScanButton({formRoot:$('#ef'),getType:()=>$('#f_type').value,getTypeSpec:specOf,toast});
+ loadScan().then(m=>m.mountScanButton({formRoot:$('#ef'),getType:()=>$('#f_type').value,getTypeSpec:specOf,toast}));
  $('#f_type').onchange=e=>{const prev=u.type;remount(e.target.value,prev)};
  $('#ef').onsubmit=e=>{e.preventDefault();
   if(!$('#f_type').value){toast('Pick a unit type first');$('#f_type').focus();return}
@@ -261,9 +269,9 @@ app.addEventListener('click',e=>{const t=e.target.closest('[data-go],[data-act],
 function render(keep){if(!started)return vGate();const p=location.hash.split('/');if(!keep)window.scrollTo(0,0);
  if(p[1]==='loc')vLoc(p[2]);else if(p[1]==='unit'&&p[3]==='edit')vEdit(p[2]);else if(p[1]==='unit')vUnit(p[2]);else if(p[1]==='print')vPrint(p[2]);else if(p[1]==='tools')T.render(p);else vHome();
  document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('on',(p[1]==='tools')===(a.dataset.n==='tools')))}
-window.addEventListener('hashchange',()=>{cancelScan();const p=location.hash.split('/');if(draft&&!(p[1]==='unit'&&p[2]===draft.id))draft=null;render()});
+window.addEventListener('hashchange',()=>{scanApi.cancelScan();const p=location.hash.split('/');if(draft&&!(p[1]==='unit'&&p[2]===draft.id))draft=null;render()});
 T.init({app,DB:()=>DB,unit,loc,unitsAt,typeOf,filtStr,esc,go,setTitle,putUnit,toast,myName,uid,natCmp,uCard});
-window.__hvac={importText,get DB(){return DB},get pending(){return pending},LOCAL,cancelScan};
+window.__hvac={importText,get DB(){return DB},get pending(){return pending},LOCAL,cancelScan:()=>scanApi.cancelScan()};
 // live refresh without wiping a form someone is typing in
 function refresh(){if(!started)return;if(T.busy())return;if(/^#\/loc\//.test(location.hash)&&$('#ulist')){drawList(location.hash.split('/')[2]);return}const a=document.activeElement;if(location.hash.includes('/edit')||(a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&a.value))return;render(true)}
 // ---- passcode gate + boot ----
@@ -295,9 +303,22 @@ async function boot(){
  try{const m=await getDoc(doc(fdb,'members',me.uid));if(m.exists()){localStorage.setItem('hvac-member',me.uid);return begin()}}catch(e){}
  if(!$('#gf'))render()}
 let gotL=false,gotU=false,firstDone=false;
+function syncDenied(e){
+  console.error(e);toast('Sync error: '+(e.code||e.message));
+  // Don't show an empty Locations list as if the crew has no sites — send them to the normal join flow.
+  if(e&&e.code==='permission-denied'){
+    try{localStorage.removeItem('hvac-member')}catch(_){}
+    started=false;gotL=false;gotU=false;firstDone=false;
+    DB={locations:[],units:[],lastExport:null,dataChanged:null};
+    gateMsg='Join your crew with the passcode to see shared locations.';
+    render();
+  }else{
+    const b=$('#rbanner');if(b){b.className='bad';b.textContent='Could not load shared locations ('+(e.code||'error')+'). Check signal and tap Refresh.';b.hidden=false}
+  }
+}
 function begin(){if(started)return;started=true;render();syncStatus();
- onSnapshot(collection(fdb,'locations'),{includeMetadataChanges:true},s=>{DB.locations=s.docs.map(d=>({id:d.id,...d.data()}));if(!s.metadata.fromCache)gotL=true;after()},e=>toast('Sync error: '+e.code));
- onSnapshot(collection(fdb,'units'),{includeMetadataChanges:true},s=>{DB.units=s.docs.map(fromUnit);if(!s.metadata.fromCache)gotU=true;after()},e=>toast('Sync error: '+e.code))}
+ onSnapshot(collection(fdb,'locations'),{includeMetadataChanges:true},s=>{DB.locations=s.docs.map(d=>({id:d.id,...d.data()}));if(!s.metadata.fromCache)gotL=true;after()},syncDenied);
+ onSnapshot(collection(fdb,'units'),{includeMetadataChanges:true},s=>{DB.units=s.docs.map(fromUnit);if(!s.metadata.fromCache)gotU=true;after()},syncDenied)}
 function after(){syncStatus();if(gotL&&gotU&&!firstDone){firstDone=true;firstSync()}refresh()}
 // ---- old phone-only (v1) units: find any not yet in the shared list ----
 let LEGACY={locations:[],units:[]},upBusy=false;
@@ -324,7 +345,7 @@ async function firstSync(){LEGACY=await loadLegacy();const miss=legacyMissing();
 boot();
 // ---- Auto-update (v8) ----
 if('serviceWorker'in navigator&&!LOCAL){const sw=navigator.serviceWorker;let hadCtl=!!sw.controller,reloading=false;
- sw.register('sw.js?v=10',{updateViaCache:'none'}).then(r=>{const up=()=>{if(navigator.onLine)r.update().catch(()=>{})};up();
+ sw.register('sw.js?v=11',{updateViaCache:'none'}).then(r=>{const up=()=>{if(navigator.onLine)r.update().catch(()=>{})};up();
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')up()});addEventListener('focus',up);addEventListener('online',up);
   if(r.waiting)r.waiting.postMessage('skip')}).catch(()=>{});
  sw.addEventListener('controllerchange',()=>{if(!hadCtl){hadCtl=true;return}if(reloading)return;
@@ -332,7 +353,7 @@ if('serviceWorker'in navigator&&!LOCAL){const sw=navigator.serviceWorker;let had
   reloading=true;location.reload()})}
 
 // ---- Refresh / "did it save?" check (no page reload, never wipes an open form) ----
-const formOpen=()=>{const a=document.activeElement;return isScanBusy()||!!document.querySelector('.scan-sheet')||location.hash.includes('/edit')||!!(a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&a.id!=='q'&&a.value)};
+const formOpen=()=>{const a=document.activeElement;return scanApi.isScanBusy()||!!document.querySelector('.scan-sheet')||location.hash.includes('/edit')||!!(a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&a.id!=='q'&&a.value)};
 const tmo=(p,ms)=>Promise.race([p.then(()=>true),new Promise(r=>setTimeout(()=>r(false),ms))]);
 function rb(cls,msg){const b=$('#rbanner');b.className=cls;b.textContent=msg;b.hidden=false;clearTimeout(rb.t);if(cls!=='busy')rb.t=setTimeout(()=>b.hidden=true,15000)}
 async function swCheck(){try{if(!('serviceWorker'in navigator)||!navigator.onLine)return false;const r=await navigator.serviceWorker.getRegistration();if(!r)return false;

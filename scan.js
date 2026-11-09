@@ -1,5 +1,5 @@
 // Data-tag scan: on-device Tesseract OCR + review sheet. Applies to form DOM only.
-import {parseNameplateText,planApply} from './nameplate.js?v=10';
+import {parseNameplateText,planApply} from './nameplate.js?v=11';
 
 const MAX_BYTES=12*1024*1024; // 12 MB
 const MAX_EDGE=2000;
