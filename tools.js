@@ -55,7 +55,7 @@ export function refId(s){s=String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 export function chargeOz(s){s=String(s||'').toLowerCase();if(!s.trim())return null;const lb=s.match(/([\d.]+)\s*(lb|lbs|#)/),oz=s.match(/([\d.]+)\s*oz/),kg=s.match(/([\d.]+)\s*kg/);
  if(kg)return Math.round(+kg[1]*35.274*10)/10;if(lb||oz)return(lb?+lb[1]*16:0)+(oz?+oz[1]:0);const n=parseFloat(s);return isFinite(n)?n:null}
 export function eqFor(u){const t=(X.typeOf(u)||'').toLowerCase();
- if(/mini|ductless/.test(t))return'mini-split';if(/heat ?pump/.test(t))return'heat-pump';if(/walk|cooler|freezer/.test(t))return'walk-in';
+ if(/mini|ductless/.test(t))return'mini-split';if(/\bwshp\b|water.?source|heat ?pump/.test(t))return'heat-pump';if(/walk|cooler|freezer/.test(t))return'walk-in';
  if(/rtu|roof|mau|make.?up|package/.test(t))return t.includes('package')?'package':'rtu';if(/ahu|air handler|vav|exhaust|fan/.test(t))return'commercial-ahu';
  if(/split|condens/.test(t))return'split-ac';if(/furnace/.test(t))return'gas-furnace';if(/boiler|hydronic/.test(t))return'boiler';if(/chiller|tower/.test(t))return'chiller';return''}
 const lastSvc=u=>(u.service||[]).filter(s=>s.date).slice().sort((a,b)=>b.date.localeCompare(a.date))[0];

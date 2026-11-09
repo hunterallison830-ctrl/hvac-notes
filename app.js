@@ -1,10 +1,10 @@
 import {initializeApp,getAuth,signInAnonymously,onAuthStateChanged,connectAuthEmulator,initializeFirestore,persistentLocalCache,persistentMultipleTabManager,collection,doc,setDoc,getDoc,deleteDoc,onSnapshot,writeBatch,serverTimestamp,connectFirestoreEmulator,getDocsFromServer,waitForPendingWrites,query,where} from './vendor/firebase.js';
-import * as T from './tools.js?v=12';
+import * as T from './tools.js?v=13';
 // Scan is lazy-loaded so Locations/home boot never depends on OCR modules.
 let scanApi={mountScanButton(){},isScanBusy:()=>false,cancelScan(){},_loaded:false};
 async function loadScan(){
   if(scanApi._loaded)return scanApi;
-  try{const m=await import('./scan.js?v=12');scanApi={mountScanButton:m.mountScanButton,isScanBusy:m.isScanBusy,cancelScan:m.cancelScan,_loaded:true}}
+  try{const m=await import('./scan.js?v=13');scanApi={mountScanButton:m.mountScanButton,isScanBusy:m.isScanBusy,cancelScan:m.cancelScan,_loaded:true}}
   catch(e){console.error(e);scanApi._loaded=true;try{toast('Scan feature unavailable on this device')}catch(_){}}
   return scanApi
 }
@@ -20,7 +20,7 @@ if(!LOCAL){
 }else{
   console.info('[hvac] LOCAL preview mode — no Firebase reads/writes');
 }
-const TYPES=['RTU','AHU','Split/Condenser','Furnace','Boiler','Chiller','Exhaust Fan','MAU','VAV','Other'];
+const TYPES=['RTU','AHU','WSHP','Split/Condenser','Furnace','Boiler','Chiller','Exhaust Fan','MAU','VAV','Other'];
 // Type-first form: which fields apply to each unit type
 const CF_LABELS={lineset:'Lineset size/length',gasBtu:'Gas type / BTU',motorHp:'Motor HP',damper:'Damper / size',tons:'Tons',fuel:'Fuel',inputBtu:'Input BTU / MBH',piping:'Supply/return / piping'};
 const CF_KEYS=Object.keys(CF_LABELS);
@@ -28,6 +28,7 @@ const CF_RE={ref:/^refrigerant$/i,chg:/^factory charge/i,lineset:/^lineset/i,gas
 const TYPE_SPEC={
  'RTU':{belts:1,filters:1,ref:1,chg:1},
  'AHU':{belts:1,filters:1,ref:1,chg:1},
+ 'WSHP':{filters:1,ref:1,chg:1},
  'MAU':{belts:1,filters:1,ref:1,chg:1},
  'Split/Condenser':{filters:1,ref:1,chg:1,lineset:1},
  'Furnace':{filters:1,gasBtu:1,ref:1},
@@ -131,7 +132,7 @@ function vEdit(id){const u=unit(id);if(!u)return go('#/');setTitle(u._new?'New u
   const sp=specOf(type);if(!sp)return`<p class="sub" id="typehint">Pick a unit type above — then the right fields show up for that equipment.</p>`;
   const filters=(u.filters&&u.filters.length?u.filters:[{size:'',qty:''}]);
   const cr=curRef(),cc=curChg(),cf=cgetL(u,CF_RE.fuel);
-  let h=`<div id="typefields">`+f('tag','Tag',type==='Boiler'?'B-1':type==='Exhaust Fan'?'EF-1':(type.split('/')[0]+'-1'))+f('where','Where it is','Roof, mech room 2…')+f('make','Make','Carrier')+f('model','Model')+f('serial','Serial');
+  let h=`<div id="typefields">`+f('tag','Tag',type==='Boiler'?'B-1':type==='Exhaust Fan'?'EF-1':type==='WSHP'?'WSHP-1':(type.split('/')[0]+'-1'))+f('where','Where it is','Roof, mech room 2…')+f('make','Make','Carrier')+f('model','Model')+f('serial','Serial');
   if(sp.belts)h+=f('belts','Belt size(s)','A42, 4L420');
   if(sp.filters)h+=`<label>Filters (size + qty)</label><div id="fl">${filters.map(fRow).join('')}</div><button type="button" class="btn alt" data-act="addF">＋ Filter size</button>`;
   if(sp.ref||sp.chg){h+=`<div class="row">`;
@@ -345,7 +346,7 @@ async function firstSync(){LEGACY=await loadLegacy();const miss=legacyMissing();
 boot();
 // ---- Auto-update (v8) ----
 if('serviceWorker'in navigator&&!LOCAL){const sw=navigator.serviceWorker;let hadCtl=!!sw.controller,reloading=false;
- sw.register('sw.js?v=12',{updateViaCache:'none'}).then(r=>{const up=()=>{if(navigator.onLine)r.update().catch(()=>{})};up();
+ sw.register('sw.js?v=13',{updateViaCache:'none'}).then(r=>{const up=()=>{if(navigator.onLine)r.update().catch(()=>{})};up();
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')up()});addEventListener('focus',up);addEventListener('online',up);
   if(r.waiting)r.waiting.postMessage('skip')}).catch(()=>{});
  sw.addEventListener('controllerchange',()=>{if(!hadCtl){hadCtl=true;return}if(reloading)return;
