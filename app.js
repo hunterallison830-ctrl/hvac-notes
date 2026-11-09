@@ -1,10 +1,17 @@
 import {initializeApp,getAuth,signInAnonymously,onAuthStateChanged,connectAuthEmulator,initializeFirestore,persistentLocalCache,persistentMultipleTabManager,collection,doc,setDoc,getDoc,deleteDoc,onSnapshot,writeBatch,serverTimestamp,connectFirestoreEmulator,getDocsFromServer,waitForPendingWrites,query,where} from './vendor/firebase.js';
-import * as T from './tools.js?v=9';
+import * as T from './tools.js?v=10';
+import {mountScanButton,isScanBusy,cancelScan} from './scan.js?v=10';
+const LOCAL=new URLSearchParams(location.search).has('local')||location.hash==='#local';
 const CFG={apiKey:'AIzaSyBzDl3H0OzCSFEl-sL1wWjr5s2esUH6fqo',authDomain:'hvac-notes.firebaseapp.com',projectId:'hvac-notes',storageBucket:'hvac-notes.firebasestorage.app',messagingSenderId:'315070304695',appId:'1:315070304695:web:9739e6600647bfc7db5832'};
-const fbApp=initializeApp(CFG),auth=getAuth(fbApp);
-const fdb=initializeFirestore(fbApp,{localCache:persistentLocalCache({tabManager:persistentMultipleTabManager()})});
-// test hook: ?emu=1 on localhost talks to the local Firebase emulators
-if(/^(localhost|127\.0\.0\.1)$/.test(location.hostname)&&new URLSearchParams(location.search).get('emu')){connectAuthEmulator(auth,'http://127.0.0.1:9099',{disableWarnings:true});connectFirestoreEmulator(fdb,'127.0.0.1',8080)}
+let fbApp=null,auth=null,fdb=null;
+if(!LOCAL){
+  fbApp=initializeApp(CFG);auth=getAuth(fbApp);
+  fdb=initializeFirestore(fbApp,{localCache:persistentLocalCache({tabManager:persistentMultipleTabManager()})});
+  // test hook: ?emu=1 on localhost talks to the local Firebase emulators
+  if(/^(localhost|127\.0\.0\.1)$/.test(location.hostname)&&new URLSearchParams(location.search).get('emu')){connectAuthEmulator(auth,'http://127.0.0.1:9099',{disableWarnings:true});connectFirestoreEmulator(fdb,'127.0.0.1',8080)}
+}else{
+  console.info('[hvac] LOCAL preview mode — no Firebase reads/writes');
+}
 const TYPES=['RTU','AHU','Split/Condenser','Furnace','Boiler','Chiller','Exhaust Fan','MAU','VAV','Other'];
 // Type-first form: which fields apply to each unit type
 const CF_LABELS={lineset:'Lineset size/length',gasBtu:'Gas type / BTU',motorHp:'Motor HP',damper:'Damper / size',tons:'Tons',fuel:'Fuel',inputBtu:'Input BTU / MBH',piping:'Supply/return / piping'};
@@ -49,11 +56,11 @@ function toDoc(u){const d={locationId:String(u.locId||''),updated:u.updated||now
  UF.forEach(k=>{const v=u[k];d[k]=['filters','service','custom'].includes(k)?(Array.isArray(v)?v.slice(0,LIM[k]):[]):String(v??'').slice(0,LIM[k])});d.locationId=d.locationId.slice(0,64);d.updated=String(d.updated).slice(0,40);return d}
 const fromUnit=s=>{const d=s.data();return{...d,id:s.id,locId:d.locationId,_pending:s.metadata.hasPendingWrites}};
 const badge=u=>u._pending?'<span class="st wait">⏳ Waiting to upload</span>':'<span class="st ok">✓ Saved</span>';
-function track(p){pending++;syncStatus();p.catch(e=>{console.error(e);toast(e.code==='permission-denied'?'Not allowed: '+e.code:'Save failed: '+(e.code||e.message))}).finally(()=>{pending--;syncStatus()})}
-function putUnit(u,keepStamp){if(!keepStamp){u.updated=now();u.updatedBy=myName()}track(setDoc(doc(fdb,'units',u.id),toDoc(u)))}
-function putLoc(l,keepStamp){if(!keepStamp)l.updated=now();track(setDoc(doc(fdb,'locations',l.id),{name:String(l.name).slice(0,200),updated:l.updated||now(),updatedAt:serverTimestamp(),updatedBy:myName()}))}
-async function batchWrite(ops){for(let i=0;i<ops.length;i+=400){const b=writeBatch(fdb);ops.slice(i,i+400).forEach(o=>o(b));track(b.commit())}}
-function syncStatus(){const el=$('#sync');if(!el)return;const t=!navigator.onLine?'Offline, will sync':pending>0?'Saving…':'Synced';el.textContent=(t==='Synced'?'● ':'○ ')+t;el.className=t==='Synced'?'ok':t==='Saving…'?'busy':'off'}
+function track(p){if(LOCAL){syncStatus();return}pending++;syncStatus();p.catch(e=>{console.error(e);toast(e.code==='permission-denied'?'Not allowed: '+e.code:'Save failed: '+(e.code||e.message))}).finally(()=>{pending--;syncStatus()})}
+function putUnit(u,keepStamp){if(!keepStamp){u.updated=now();u.updatedBy=myName()}if(LOCAL){const i=DB.units.findIndex(x=>x.id===u.id);if(i>=0)DB.units[i]=u;else DB.units.push({...u});delete u._new;syncStatus();return}track(setDoc(doc(fdb,'units',u.id),toDoc(u)))}
+function putLoc(l,keepStamp){if(!keepStamp)l.updated=now();if(LOCAL){const i=DB.locations.findIndex(x=>x.id===l.id);if(i>=0)DB.locations[i]={...DB.locations[i],...l};else DB.locations.push({...l});syncStatus();return}track(setDoc(doc(fdb,'locations',l.id),{name:String(l.name).slice(0,200),updated:l.updated||now(),updatedAt:serverTimestamp(),updatedBy:myName()}))}
+async function batchWrite(ops){if(LOCAL){syncStatus();return}for(let i=0;i<ops.length;i+=400){const b=writeBatch(fdb);ops.slice(i,i+400).forEach(o=>o(b));track(b.commit())}}
+function syncStatus(){const el=$('#sync');if(!el)return;if(LOCAL){el.textContent='● Local preview';el.className='ok';return}const t=!navigator.onLine?'Offline, will sync':pending>0?'Saving…':'Synced';el.textContent=(t==='Synced'?'● ':'○ ')+t;el.className=t==='Synced'?'ok':t==='Saving…'?'busy':'off'}
 addEventListener('online',syncStatus);addEventListener('offline',syncStatus);
 const toast=m=>{const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>t.style.display='none',2200)};
 const loc=id=>DB.locations.find(l=>l.id===id),unit=id=>DB.units.find(u=>u.id===id)||(draft&&draft.id===id?draft:null);
@@ -177,6 +184,7 @@ function vEdit(id){const u=unit(id);if(!u)return go('#/');setTitle(u._new?'New u
   $('#ct').hidden=type!=='Other';
   $('#savebtn').disabled=!type;
   if(type&&$('#f_tag'))$('#f_tag').focus()}
+ mountScanButton({formRoot:$('#ef'),getType:()=>$('#f_type').value,getTypeSpec:specOf,toast});
  $('#f_type').onchange=e=>{const prev=u.type;remount(e.target.value,prev)};
  $('#ef').onsubmit=e=>{e.preventDefault();
   if(!$('#f_type').value){toast('Pick a unit type first');$('#f_type').focus();return}
@@ -222,6 +230,7 @@ function importText(txt){let d;try{d=JSON.parse(txt)}catch(e){return alert('Not 
  d.units.forEach(u=>{u.locId=mapLoc(u.locId);const ex=unit(u.id);if(!ex)plan.newU.push(u);else if((u.updated||'')>(ex.updated||''))plan.upd.push(u);else if(u.updated===ex.updated)plan.same++;else plan.keep++});
  const msg=`Import summary:\n• ${plan.newLoc.length} new location(s)${plan.newLoc.length?': '+plan.newLoc.map(l=>l.name).join(', '):''}\n• ${plan.newU.length} new unit(s)\n• ${plan.upd.length} unit(s) will be UPDATED (file is newer)${plan.upd.length?': '+plan.upd.map(u=>u.tag).join(', '):''}\n• ${plan.keep} kept (yours is newer)\n• ${plan.same} already identical\n\nApply?`;
  if(!confirm(msg))return;
+ if(LOCAL){plan.newLoc.forEach(l=>{delete l._map;DB.locations.push(l)});[...plan.newU,...plan.upd].forEach(u=>{u.id=String(u.id||uid());const i=DB.units.findIndex(x=>x.id===u.id);if(i>=0)DB.units[i]=u;else DB.units.push(u)});toast(`Imported locally: ${plan.newU.length} new, ${plan.upd.length} updated`);render();return}
  const ops=[],locs=new Set(DB.locations.map(l=>l.id));
  plan.newLoc.forEach(l=>{delete l._map;locs.add(l.id);ops.push(b=>b.set(doc(fdb,'locations',String(l.id)),{name:String(l.name||'Imported').slice(0,200),updated:l.updated||now(),updatedAt:serverTimestamp(),updatedBy:myName()}))});
  [...plan.newU,...plan.upd].forEach(u=>{u.id=String(u.id||uid());if(!locs.has(u.locId)){locs.add(u.locId);ops.push(b=>b.set(doc(fdb,'locations',String(u.locId)),{name:'Imported',updated:now(),updatedAt:serverTimestamp(),updatedBy:myName()}))}
@@ -234,11 +243,11 @@ const A={
  addLoc(){const n=prompt('Location name');if(n&&n.trim()){const l={id:uid(),name:n.trim()};putLoc(l)}},
  renLoc(id){const l=loc(id),n=prompt('Rename location',l.name);if(n&&n.trim()){putLoc({...l,name:n.trim()})}},
  setName(){const n=prompt('Your name (shown on your edits)',myName());if(n!==null){localStorage.setItem('hvac-name',n.trim().slice(0,60));render()}},
- delLoc(id){const l=loc(id),c=unitsAt(id).length;if(confirm(`Delete "${l.name}" and its ${c} unit(s)? This cannot be undone. Export first if unsure.`)&&(!c||prompt('Type DELETE to confirm')==='DELETE')){const ids=unitsAt(id).map(u=>u.id);batchWrite([b=>b.delete(doc(fdb,'locations',id)),...ids.map(u=>b=>b.delete(doc(fdb,'units',u)))]);go('#/')}},
+ delLoc(id){const l=loc(id),c=unitsAt(id).length;if(confirm(`Delete "${l.name}" and its ${c} unit(s)? This cannot be undone. Export first if unsure.`)&&(!c||prompt('Type DELETE to confirm')==='DELETE')){if(LOCAL){DB.units=DB.units.filter(u=>u.locId!==id);DB.locations=DB.locations.filter(x=>x.id!==id);go('#/');return}const ids=unitsAt(id).map(u=>u.id);batchWrite([b=>b.delete(doc(fdb,'locations',id)),...ids.map(u=>b=>b.delete(doc(fdb,'units',u)))]);go('#/')}},
  addUnit(id){const u=blankUnit(id);draft=u;go('#/unit/'+u.id+'/edit')},
  dupUnit(id){const s=unit(id),u=JSON.parse(JSON.stringify(s));u.id=uid();u.serial='';u.service=[];u.updated=now();u._new=true;
   u.tag=(s.tag||'').replace(/(\d+)(?!.*\d)/,m=>String(+m+1));delete u.updatedBy;draft=u;toast('Copied — set the tag & serial');go('#/unit/'+u.id+'/edit')},
- delUnit(id){const u=unit(id);if(confirm(`Delete ${u.tag||'this unit'} for the whole crew? This cannot be undone.`)){track(deleteDoc(doc(fdb,'units',id)));go('#/loc/'+u.locId)}},
+ delUnit(id){const u=unit(id);if(confirm(`Delete ${u.tag||'this unit'} for the whole crew? This cannot be undone.`)){if(LOCAL){DB.units=DB.units.filter(x=>x.id!==id);go('#/loc/'+u.locId);return}track(deleteDoc(doc(fdb,'units',id)));go('#/loc/'+u.locId)}},
  cancelEdit(id){const u=unit(id);if(u._new){draft=null;go('#/loc/'+u.locId)}else go('#/unit/'+id)},
  addSvc(id){const u=unit(id),w=$('#sw').value.trim();if(!w){$('#sw').focus();return toast('Enter what was done')}const by=$('#sb').value.trim();localStorage.setItem('hvac-by',by);
   (u.service=u.service||[]).push({id:uid(),date:$('#sd').value,what:w,by});putUnit(u);toast('Service added');render()},
@@ -252,9 +261,9 @@ app.addEventListener('click',e=>{const t=e.target.closest('[data-go],[data-act],
 function render(keep){if(!started)return vGate();const p=location.hash.split('/');if(!keep)window.scrollTo(0,0);
  if(p[1]==='loc')vLoc(p[2]);else if(p[1]==='unit'&&p[3]==='edit')vEdit(p[2]);else if(p[1]==='unit')vUnit(p[2]);else if(p[1]==='print')vPrint(p[2]);else if(p[1]==='tools')T.render(p);else vHome();
  document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('on',(p[1]==='tools')===(a.dataset.n==='tools')))}
-window.addEventListener('hashchange',()=>{const p=location.hash.split('/');if(draft&&!(p[1]==='unit'&&p[2]===draft.id))draft=null;render()});
+window.addEventListener('hashchange',()=>{cancelScan();const p=location.hash.split('/');if(draft&&!(p[1]==='unit'&&p[2]===draft.id))draft=null;render()});
 T.init({app,DB:()=>DB,unit,loc,unitsAt,typeOf,filtStr,esc,go,setTitle,putUnit,toast,myName,uid,natCmp,uCard});
-window.__hvac={importText,get DB(){return DB},get pending(){return pending}};
+window.__hvac={importText,get DB(){return DB},get pending(){return pending},LOCAL,cancelScan};
 // live refresh without wiping a form someone is typing in
 function refresh(){if(!started)return;if(T.busy())return;if(/^#\/loc\//.test(location.hash)&&$('#ulist')){drawList(location.hash.split('/')[2]);return}const a=document.activeElement;if(location.hash.includes('/edit')||(a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&a.value))return;render(true)}
 // ---- passcode gate + boot ----
@@ -270,7 +279,17 @@ function vGate(){setTitle('HVAC Notes');$('#back').style.visibility='hidden';
   try{await setDoc(doc(fdb,'members',me.uid),{code,name,joined:serverTimestamp()});localStorage.setItem('hvac-member',me.uid);begin()}
   catch(err){gm(err.code==='permission-denied'?'Wrong passcode. Try again.':'Could not join: '+(err.code||err.message))}}}
 const gm=m=>{gateMsg=m;const e=$('#gmsg');if(e)e.textContent=m};
-async function boot(){render();
+async function boot(){
+ if(LOCAL){
+  localStorage.setItem('hvac-name',localStorage.getItem('hvac-name')||'Preview');
+  DB={locations:[{id:'preview-site',name:'Preview Site (synthetic)',updated:now()}],units:[
+   {id:'preview-rtu1',locId:'preview-site',tag:'RTU-1',type:'RTU',customType:'',where:'Roof',make:'Carrier',model:'',serial:'',belts:'',filters:[],notes:'Synthetic preview unit — not real crew data',service:[],custom:[],updated:now()},
+   {id:'preview-b1',locId:'preview-site',tag:'B-1',type:'Boiler',customType:'',where:'Mech room',make:'',model:'',serial:'',belts:'',filters:[],notes:'Empty boiler for scan tests',service:[],custom:[],updated:now()}
+  ],lastExport:null,dataChanged:null};
+  started=true;render();syncStatus();
+  const ban=document.createElement('div');ban.className='warn noprint';ban.textContent='LOCAL PREVIEW — synthetic data only. No Firebase. Nothing here is your crew list.';
+  app.prepend(ban);return}
+ render();
  me=await (meP=new Promise(r=>{const off=onAuthStateChanged(auth,u=>{if(u){off();r(u)}});setTimeout(()=>{if(!auth.currentUser)signInAnonymously(auth).catch(e=>{gateMsg='No internet. Connect once to join the crew.';render()})},50)}));
  if(localStorage.getItem('hvac-member')===me.uid)return begin();
  try{const m=await getDoc(doc(fdb,'members',me.uid));if(m.exists()){localStorage.setItem('hvac-member',me.uid);return begin()}}catch(e){}
@@ -304,8 +323,8 @@ async function firstSync(){LEGACY=await loadLegacy();const miss=legacyMissing();
  refresh()}
 boot();
 // ---- Auto-update (v8) ----
-if('serviceWorker'in navigator){const sw=navigator.serviceWorker;let hadCtl=!!sw.controller,reloading=false;
- sw.register('sw.js?v=9',{updateViaCache:'none'}).then(r=>{const up=()=>{if(navigator.onLine)r.update().catch(()=>{})};up();
+if('serviceWorker'in navigator&&!LOCAL){const sw=navigator.serviceWorker;let hadCtl=!!sw.controller,reloading=false;
+ sw.register('sw.js?v=10',{updateViaCache:'none'}).then(r=>{const up=()=>{if(navigator.onLine)r.update().catch(()=>{})};up();
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')up()});addEventListener('focus',up);addEventListener('online',up);
   if(r.waiting)r.waiting.postMessage('skip')}).catch(()=>{});
  sw.addEventListener('controllerchange',()=>{if(!hadCtl){hadCtl=true;return}if(reloading)return;
@@ -313,7 +332,7 @@ if('serviceWorker'in navigator){const sw=navigator.serviceWorker;let hadCtl=!!sw
   reloading=true;location.reload()})}
 
 // ---- Refresh / "did it save?" check (no page reload, never wipes an open form) ----
-const formOpen=()=>{const a=document.activeElement;return location.hash.includes('/edit')||!!(a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&a.id!=='q'&&a.value)};
+const formOpen=()=>{const a=document.activeElement;return isScanBusy()||!!document.querySelector('.scan-sheet')||location.hash.includes('/edit')||!!(a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&a.id!=='q'&&a.value)};
 const tmo=(p,ms)=>Promise.race([p.then(()=>true),new Promise(r=>setTimeout(()=>r(false),ms))]);
 function rb(cls,msg){const b=$('#rbanner');b.className=cls;b.textContent=msg;b.hidden=false;clearTimeout(rb.t);if(cls!=='busy')rb.t=setTimeout(()=>b.hidden=true,15000)}
 async function swCheck(){try{if(!('serviceWorker'in navigator)||!navigator.onLine)return false;const r=await navigator.serviceWorker.getRegistration();if(!r)return false;
@@ -325,7 +344,7 @@ async function doRefresh(){if(rBusy)return;
  const open=formOpen();
  if(open&&!confirm('You have an edit open that is NOT saved yet.\n\nTap Save first if you want it checked.\n\nCheck the server anyway? (Your typing stays, nothing is reloaded.)'))return;
  rBusy=true;const btn=$('#refresh');btn.disabled=true;rb('busy','Checking with server…');
- try{const p=location.hash.split('/');let scope=null;
+ try{if(LOCAL){rb('good','Local preview — no server. Synthetic data only.');return}const p=location.hash.split('/');let scope=null;
   if(p[1]==='loc'||p[1]==='print')scope=p[2];else if(p[1]==='unit'){const u=unit(p[2]);scope=u?u.locId:null}
   const upd=swCheck();
   const flushed=navigator.onLine?await tmo(waitForPendingWrites(fdb),8000):false;

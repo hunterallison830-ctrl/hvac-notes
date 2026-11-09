@@ -1,0 +1,3 @@
+tesseract.js@5.1.1
+tesseract.js-core@5.1.1 (lstm wasm.js only)
+eng.traineddata.gz 4.0.0
