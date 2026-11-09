@@ -1,10 +1,10 @@
 import {initializeApp,getAuth,signInAnonymously,onAuthStateChanged,connectAuthEmulator,initializeFirestore,persistentLocalCache,persistentMultipleTabManager,collection,doc,setDoc,getDoc,deleteDoc,onSnapshot,writeBatch,serverTimestamp,connectFirestoreEmulator,getDocsFromServer,waitForPendingWrites,query,where} from './vendor/firebase.js';
-import * as T from './tools.js?v=11';
+import * as T from './tools.js?v=12';
 // Scan is lazy-loaded so Locations/home boot never depends on OCR modules.
 let scanApi={mountScanButton(){},isScanBusy:()=>false,cancelScan(){},_loaded:false};
 async function loadScan(){
   if(scanApi._loaded)return scanApi;
-  try{const m=await import('./scan.js?v=11');scanApi={mountScanButton:m.mountScanButton,isScanBusy:m.isScanBusy,cancelScan:m.cancelScan,_loaded:true}}
+  try{const m=await import('./scan.js?v=12');scanApi={mountScanButton:m.mountScanButton,isScanBusy:m.isScanBusy,cancelScan:m.cancelScan,_loaded:true}}
   catch(e){console.error(e);scanApi._loaded=true;try{toast('Scan feature unavailable on this device')}catch(_){}}
   return scanApi
 }
@@ -345,7 +345,7 @@ async function firstSync(){LEGACY=await loadLegacy();const miss=legacyMissing();
 boot();
 // ---- Auto-update (v8) ----
 if('serviceWorker'in navigator&&!LOCAL){const sw=navigator.serviceWorker;let hadCtl=!!sw.controller,reloading=false;
- sw.register('sw.js?v=11',{updateViaCache:'none'}).then(r=>{const up=()=>{if(navigator.onLine)r.update().catch(()=>{})};up();
+ sw.register('sw.js?v=12',{updateViaCache:'none'}).then(r=>{const up=()=>{if(navigator.onLine)r.update().catch(()=>{})};up();
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')up()});addEventListener('focus',up);addEventListener('online',up);
   if(r.waiting)r.waiting.postMessage('skip')}).catch(()=>{});
  sw.addEventListener('controllerchange',()=>{if(!hadCtl){hadCtl=true;return}if(reloading)return;

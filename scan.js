@@ -1,19 +1,34 @@
 // Data-tag scan: on-device Tesseract OCR + review sheet. Applies to form DOM only.
-import {parseNameplateText,planApply} from './nameplate.js?v=11';
+import {parseNameplateText,planApply} from './nameplate.js?v=12';
 
-const MAX_BYTES=12*1024*1024; // 12 MB
+const MAX_BYTES=12*1024*1024;
 const MAX_EDGE=2000;
-const BASE=new URL('./vendor/tesseract/',import.meta.url);
+const OCR_TIMEOUT_MS=120000;
+const LOAD_TIMEOUT_MS=90000;
+// Resolve asset base without query/hash so Pages ?v= cache-bust on scan.js cannot break relative paths
+const HERE=(()=>{const u=new URL(import.meta.url);u.search='';u.hash='';return u})();
+const BASE=new URL('./vendor/tesseract/',HERE);
 
 let tessLoading=null,worker=null,scanGen=0,sheetEl=null,busy=false;
 
+function withTimeout(promise,ms,label){
+  let t;const to=new Promise((_,rej)=>{t=setTimeout(()=>rej(new Error(label||('Timed out after '+Math.round(ms/1000)+'s'))),ms)});
+  return Promise.race([promise,to]).finally(()=>clearTimeout(t));
+}
+
 function loadScript(src){
   return new Promise((res,rej)=>{
-    if([...document.scripts].some(s=>s.src===src))return res();
+    const abs=new URL(src,location.href).href;
+    if([...document.scripts].some(s=>s.src===abs||s.src===src))return res();
     const s=document.createElement('script');s.src=src;s.async=true;
-    s.onload=()=>res();s.onerror=()=>rej(new Error('Could not load OCR engine'));
+    s.onload=()=>res();s.onerror=()=>rej(new Error('Could not load OCR engine script. Check signal and try again.'));
     document.head.appendChild(s);
   });
+}
+
+async function resetWorker(){
+  try{if(worker)await worker.terminate()}catch(_){}
+  worker=null;tessLoading=null;
 }
 
 async function ensureTess(onProg){
@@ -21,41 +36,76 @@ async function ensureTess(onProg){
   if(tessLoading)return tessLoading;
   tessLoading=(async()=>{
     onProg&&onProg('Loading on-device OCR…');
-    await loadScript(new URL('tesseract.min.js',BASE).href);
-    const T=window.Tesseract;if(!T||!T.createWorker)throw new Error('OCR library missing');
+    await withTimeout(loadScript(new URL('tesseract.min.js',BASE).href),15000,'OCR engine download timed out');
+    const T=window.Tesseract;if(!T||!T.createWorker)throw new Error('OCR library missing after load');
     onProg&&onProg('Starting OCR worker…');
-    const w=await T.createWorker('eng',1,{
+    // workerBlobURL:true (default behavior) — blob worker + importScripts(workerPath) is more reliable
+    // under service workers than new Worker(absolutePath) on some mobile browsers.
+    const w=await withTimeout(T.createWorker('eng',1,{
       workerPath:new URL('worker.min.js',BASE).href,
       corePath:new URL('core/',BASE).href,
       langPath:new URL('lang/',BASE).href,
-      workerBlobURL:false,
-      logger:m=>{if(!onProg||!m)return;if(m.status==='recognizing text'&&m.progress!=null)onProg('Reading tag… '+Math.round(m.progress*100)+'%');else if(m.status)onProg(String(m.status).replace(/\b\w/g,c=>c.toUpperCase()))}
-    });
+      workerBlobURL:true,
+      cacheMethod:'none',
+      logger:m=>{if(!onProg||!m)return;if(m.status==='recognizing text'&&m.progress!=null)onProg('Reading tag… '+Math.round(m.progress*100)+'%');else if(m.status)onProg(String(m.status))}
+    }),LOAD_TIMEOUT_MS,'OCR worker startup timed out (language/core download). Try Wi‑Fi and retry.');
     worker=w;return w;
   })();
-  try{return await tessLoading}catch(e){tessLoading=null;throw e}
+  try{return await tessLoading}catch(e){tessLoading=null;await resetWorker();throw e}
 }
 
 function revokeSoon(url){if(url&&url.startsWith('blob:'))setTimeout(()=>URL.revokeObjectURL(url),30_000)}
 
-async function prepareImage(file){
-  if(!file)throw new Error('No image');
-  if(!/^image\//i.test(file.type)&&!/\.(jpe?g|png|webp|heic|gif)$/i.test(file.name||''))throw new Error('Pick a photo (JPG/PNG/WebP)');
-  if(file.size>MAX_BYTES)throw new Error('Photo too large (max 12 MB). Try a closer crop.');
-  let bitmap;
-  try{bitmap=await createImageBitmap(file)}catch(e){
-    // fallback via object URL
+function isHeic(file){
+  const n=(file&&file.name||'').toLowerCase();
+  const t=(file&&file.type||'').toLowerCase();
+  return t.includes('heic')||t.includes('heif')||/\.heic$|\.heif$/i.test(n);
+}
+
+function loadViaImageElement(file){
+  return new Promise((res,rej)=>{
     const url=URL.createObjectURL(file);
-    try{bitmap=await createImageBitmap(await fetch(url).then(r=>r.blob()))}finally{URL.revokeObjectURL(url)}
+    const img=new Image();
+    img.onload=()=>{URL.revokeObjectURL(url);res(img)};
+    img.onerror=()=>{URL.revokeObjectURL(url);rej(new Error('Could not decode this photo. Try JPG or PNG.'))};
+    img.src=url;
+  });
+}
+
+async function prepareImage(file){
+  if(!file)throw new Error('No image selected');
+  if(isHeic(file))throw new Error('HEIC/HEIF photos are not supported in this scanner. In iPhone Camera settings, use “Most Compatible” (JPG), or export/share as JPG, then Upload Photo.');
+  const okType=/^image\/(jpeg|jpg|png|webp|gif|bmp)$/i.test(file.type||'');
+  const okName=/\.(jpe?g|png|webp|gif|bmp)$/i.test(file.name||'');
+  if(!okType&&!okName&&file.type&&file.type.startsWith('image/')){
+    // unknown image/* — try decode, but warn in UI later if needed
+  }else if(!okType&&!okName){
+    throw new Error('Unsupported file. Upload a JPG or PNG of the data tag.');
   }
-  const scale=Math.min(1,MAX_EDGE/Math.max(bitmap.width,bitmap.height));
-  const w=Math.max(1,Math.round(bitmap.width*scale)),h=Math.max(1,Math.round(bitmap.height*scale));
+  if(file.size>MAX_BYTES)throw new Error('Photo too large (max 12 MB). Move closer and retake, or crop first.');
+
+  let source=null,sw=0,sh=0;
+  // Prefer createImageBitmap when available; fall back to <img> for iOS quirks
+  if(typeof createImageBitmap==='function'){
+    try{
+      const bmp=await createImageBitmap(file);
+      source=bmp;sw=bmp.width;sh=bmp.height;
+    }catch(_){source=null}
+  }
+  if(!source){
+    const img=await loadViaImageElement(file);
+    source=img;sw=img.naturalWidth||img.width;sh=img.naturalHeight||img.height;
+  }
+  if(!sw||!sh)throw new Error('Photo decoded with no dimensions. Try another JPG/PNG.');
+
+  const scale=Math.min(1,MAX_EDGE/Math.max(sw,sh));
+  const w=Math.max(1,Math.round(sw*scale)),h=Math.max(1,Math.round(sh*scale));
   const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;
   const ctx=canvas.getContext('2d',{willReadFrequently:true});
+  if(!ctx)throw new Error('Canvas unavailable in this browser');
   ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);
-  ctx.drawImage(bitmap,0,0,w,h);
-  bitmap.close&&bitmap.close();
-  // light contrast help without fancy CV
+  ctx.drawImage(source,0,0,w,h);
+  if(source.close)try{source.close()}catch(_){}
   try{
     const img=ctx.getImageData(0,0,w,h),d=img.data;
     for(let i=0;i<d.length;i+=4){
@@ -65,7 +115,7 @@ async function prepareImage(file){
     }
     ctx.putImageData(img,0,0);
   }catch(_){}
-  const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));
+  const blob=await new Promise((res,rej)=>canvas.toBlob(b=>b?res(b):rej(new Error('Could not prepare photo for OCR')),'image/jpeg',0.92));
   return{canvas,blob,width:w,height:h};
 }
 
@@ -86,7 +136,6 @@ function openSheet(title){
 }
 
 function setBody(html){const b=document.getElementById('scanbody');if(b)b.innerHTML=html}
-
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
 function readCurrentFromForm(formRoot){
@@ -97,7 +146,6 @@ function readCurrentFromForm(formRoot){
     const val=(r.children[1]&&r.children[1].value||'').trim();
     if(lab)custom[lab]=val;
   });
-  // also managed customs that may not be in .cr
   ['Voltage','Amps (RLA/FLA)','Phase','MCA','Max fuse / MOP'].forEach(lab=>{if(custom[lab]==null)custom[lab]=''});
   return{
     make:g('#f_make'),model:g('#f_model'),serial:g('#f_serial'),
@@ -112,13 +160,14 @@ function renderReview({plan,raw,previewUrl,warnings,onApply}){
     <p class="sub">Review required — OCR often swaps 0/O and 1/I in model/serial even at high confidence (not auto-flagged). Empty fields are checked by default; existing values stay unless you check Replace.</p>
     ${previewUrl?`<img class="scan-prev" src="${previewUrl}" alt="Data tag preview">`:''}
     ${warnings.map(w=>`<div class="warn">${esc(w)}</div>`).join('')}
-    <div id="scanrows">${rows.length?rows.map((r,i)=>rowHtml(r,i)).join(''):'<p class="sub">Nothing extracted. You can still paste raw text below into notes manually.</p>'}</div>
+    <div id="scanrows">${rows.length?rows.map((r,i)=>rowHtml(r,i)).join(''):'<p class="sub">Nothing extracted. Retake closer/flatter, or enter manually.</p>'}</div>
     <details class="scan-raw"><summary>Show raw OCR text</summary><pre class="scan-pre">${esc(raw||'')}</pre></details>
     <button type="button" class="btn" data-scan="apply" ${rows.length?'':'disabled'}>Apply selected to form</button>
     <button type="button" class="btn alt" data-scan="cancel">Cancel — change nothing</button>
     <p class="sub">Apply only fills the open form. Tap Save on the unit to store anything.</p>`);
   const body=document.getElementById('scanbody');
-  body.querySelector('[data-scan="apply"]').onclick=()=>{
+  const applyBtn=body.querySelector('[data-scan="apply"]');
+  if(applyBtn)applyBtn.onclick=()=>{
     const selected=rows.map((r,i)=>{
       const box=body.querySelector(`#scan_sel_${i}`);
       const val=body.querySelector(`#scan_val_${i}`);
@@ -161,7 +210,6 @@ function applyToForm(formRoot,plan){
     if(r.target==='custom'){setCustomField(formRoot,r.customLabel,String(r.value).trim());n++;continue}
     const map={make:'#f_make',model:'#f_model',serial:'#f_serial',ref:'#f_ref',chg:'#f_chg',tons:'#f_tons',fuel:'#f_fuel',inputBtu:'#f_inputBtu',motorHp:'#f_motorHp'};
     const sel=map[r.target];if(!sel)continue;
-    // For select (ref/fuel), add option if missing
     const el=formRoot.querySelector(sel);
     if(el&&el.tagName==='SELECT'){
       const v=String(r.value).trim();
@@ -175,33 +223,52 @@ function applyToForm(formRoot,plan){
   return n;
 }
 
-/**
- * Wire a Scan data tag control into an edit form.
- * opts: {formRoot, getType, getTypeSpec, toast}
- */
+function friendlyErr(e){
+  const m=String(e&&e.message||e||'Unknown error');
+  if(/heic|heif/i.test(m))return m;
+  if(/timed out/i.test(m))return m+' If this keeps happening, use Upload Photo on Wi‑Fi.';
+  if(/OCR engine|OCR library|worker|language|core/i.test(m))return m+' The first scan downloads on-device OCR files (~20MB).';
+  if(/decode|dimensions|Canvas|Unsupported|too large|No image/i.test(m))return m;
+  return 'Scan failed: '+m+'. Try Upload Photo with a bright, flat JPG of the tag.';
+}
+
+/** Wire Take Photo + Upload Photo into an edit form. */
 export function mountScanButton(opts){
   const {formRoot,getType,getTypeSpec,toast}=opts;
-  if(!formRoot||formRoot.querySelector('#scanTagBtn'))return;
+  if(!formRoot||formRoot.querySelector('#scanBar'))return;
   const wrap=document.createElement('div');
-  wrap.className='scan-bar noprint';
-  wrap.innerHTML=`<button type="button" class="btn alt" id="scanTagBtn">📷 Scan data tag</button>
-    <input type="file" id="scanFile" accept="image/*" capture="environment" hidden>
-    <p class="sub">Photo stays on this phone. On-device OCR fills a review sheet — it does not auto-save.</p>`;
+  wrap.className='scan-bar noprint';wrap.id='scanBar';
+  wrap.innerHTML=`
+    <div class="row" style="margin:0">
+      <button type="button" class="btn alt" id="scanTakeBtn">📷 Take Photo</button>
+      <button type="button" class="btn alt" id="scanUploadBtn">🖼️ Upload Photo</button>
+    </div>
+    <input type="file" id="scanFileCamera" accept="image/*" capture="environment" hidden>
+    <input type="file" id="scanFileGallery" accept="image/*" hidden>
+    <p class="sub">Photo stays on this phone. On-device OCR opens a review sheet — it does not auto-save. Prefer JPG/PNG (not HEIC).</p>`;
   const dyn=formRoot.querySelector('#dyn')||formRoot;
   formRoot.insertBefore(wrap,dyn);
-  const btn=wrap.querySelector('#scanTagBtn');
-  const file=wrap.querySelector('#scanFile');
-  btn.onclick=()=>{if(busy)return toast&&toast('Scan already running');file.value='';file.click()};
-  file.onchange=async()=>{
-    const f=file.files&&file.files[0];file.value='';
-    if(!f)return;
-    await runScan({file:f,formRoot,getType,getTypeSpec,toast});
+  const cam=wrap.querySelector('#scanFileCamera');
+  const gal=wrap.querySelector('#scanFileGallery');
+  const start=async(input)=>{
+    if(busy)return toast&&toast('Scan already running');
+    input.value='';
+    input.onchange=async()=>{
+      const f=input.files&&input.files[0];
+      input.value='';
+      input.onchange=null;
+      if(!f)return; // user canceled picker
+      await runScan({file:f,formRoot,getType,getTypeSpec,toast});
+    };
+    input.click();
   };
+  wrap.querySelector('#scanTakeBtn').onclick=()=>start(cam);
+  wrap.querySelector('#scanUploadBtn').onclick=()=>start(gal);
 }
 
 export async function runScan({file,formRoot,getType,getTypeSpec,toast,rawText}){
   const my=++scanGen;busy=true;
-  const sheet=openSheet('Scan data tag');
+  openSheet('Scan data tag');
   let previewUrl='';
   try{
     setBody(`<p class="sub" id="scanprog">Preparing photo…</p><div class="scan-prog"><i id="scanbar"></i></div>`);
@@ -215,7 +282,7 @@ export async function runScan({file,formRoot,getType,getTypeSpec,toast,rawText})
       const w=await ensureTess(prog);
       if(my!==scanGen)return;
       prog('Reading tag…');
-      const result=await w.recognize(prepared.canvas);
+      const result=await withTimeout(w.recognize(prepared.canvas),OCR_TIMEOUT_MS,'Reading the tag timed out');
       if(my!==scanGen)return;
       text=(result&&result.data&&result.data.text)||'';
     }
@@ -233,7 +300,8 @@ export async function runScan({file,formRoot,getType,getTypeSpec,toast,rawText})
   }catch(e){
     if(my!==scanGen)return;
     console.error(e);
-    setBody(`<div class="warn">Scan failed: ${esc(e.message||e)}. Try another photo or enter the tag manually.</div>
+    await resetWorker();
+    setBody(`<div class="warn">${esc(friendlyErr(e))}</div>
       <button type="button" class="btn alt" data-scan="cancel">Close</button>`);
   }finally{
     if(my===scanGen)busy=false;
@@ -243,5 +311,4 @@ export async function runScan({file,formRoot,getType,getTypeSpec,toast,rawText})
 export function isScanBusy(){return busy}
 export function cancelScan(){scanGen++;closeSheet()}
 
-// test hook
-export const __scan={prepareImage,ensureTess,applyToForm,readCurrentFromForm,MAX_BYTES};
+export const __scan={prepareImage,ensureTess,applyToForm,readCurrentFromForm,MAX_BYTES,resetWorker,BASE:BASE.href,isHeic,friendlyErr};

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow,noarchive">
+<meta name="googlebot" content="noindex,nofollow">
+<title>HVAC Scanner QA (temporary synthetic)</title>
+<link rel="stylesheet" href="style.css?v=12">
+<style>
+body{background:#000;color:#fff;font:18px/1.4 system-ui;margin:0;padding:12px;padding-bottom:40px;max-width:480px;margin-inline:auto}
+.banner{background:#3a2a00;border:2px solid #facc15;border-radius:12px;padding:12px;margin:8px 0;font-weight:700}
+.banner .sub{font-weight:600;color:#ddd;margin-top:8px}
+#ef label{display:block;margin:10px 0 4px;color:#ffd400;font-weight:700}
+#ef input,#ef select{width:100%;min-height:48px;font-size:18px;padding:10px;background:#0b0b0b;color:#fff;border:2px solid #555;border-radius:10px;box-sizing:border-box}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#ffd400;color:#000;font-weight:700;padding:12px 18px;border-radius:12px;display:none;z-index:9;max-width:90%}
+</style>
+</head>
+<body>
+<div class="banner" role="status">
+  TEMPORARY SYNTHETIC SCANNER QA — not crew data.
+  <div class="sub">No Firebase. No locations/units. Fictional nameplate images only. Remove after browser QA.</div>
+</div>
+<form id="ef">
+  <label for="f_type">Unit type</label>
+  <select id="f_type"><option>RTU</option><option>Boiler</option><option>Chiller</option></select>
+  <div id="dyn">
+    <label for="f_make">Make</label><input id="f_make" data-k="make" value="Trane">
+    <label for="f_model">Model</label><input id="f_model" data-k="model" value="">
+    <label for="f_serial">Serial</label><input id="f_serial" data-k="serial" value="KEEPME">
+    <label for="f_ref">Refrigerant</label>
+    <select id="f_ref"><option value="">—</option><option>R-410A</option><option>R-454B</option><option>R-32</option><option>R-22</option></select>
+    <label for="f_chg">Factory charge</label><input id="f_chg" value="">
+    <label>Custom fields</label><div id="cl"></div>
+  </div>
+</form>
+<p class="sub">1) Use <b>Take Photo</b> / <b>Upload Photo</b> above, or 2) tap a fixture button (deterministic synthetic tag).</p>
+<div class="row">
+  <button type="button" class="btn alt" id="fixSharp">Use sharp fixture</button>
+  <button type="button" class="btn alt" id="fixDim">Use dim fixture</button>
+</div>
+<p class="sub">Occupied Make=Trane and Serial=KEEPME stay unchecked by default. Review model/serial for 0/O and 1/I. Apply fills this form only — there is no Save/cloud.</p>
+<div id="toast"></div>
+<script type="module">
+import {mountScanButton,runScan,__scan} from './scan.js?v=12';
+const form=document.getElementById('ef');
+const toast=m=>{const t=document.getElementById('toast');t.textContent=m;t.style.display='block';clearTimeout(toast._t);toast._t=setTimeout(()=>t.style.display='none',2800)};
+const TYPE_SPEC={RTU:{ref:1,chg:1},Boiler:{fuel:1,inputBtu:1},Chiller:{ref:1,chg:1,tons:1}};
+mountScanButton({
+  formRoot:form,
+  getType:()=>document.getElementById('f_type').value,
+  getTypeSpec:t=>TYPE_SPEC[t]||{},
+  toast
+});
+async function asFile(url,name){
+  const blob=await fetch(url,{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('Fixture missing');return r.blob()});
+  return new File([blob],name,{type:blob.type||'image/png'});
+}
+async function runFixture(url,name){
+  const f=await asFile(url,name);
+  await runScan({file:f,formRoot:form,getType:()=>document.getElementById('f_type').value,getTypeSpec:t=>TYPE_SPEC[t]||{},toast});
+}
+document.getElementById('fixSharp').onclick=()=>runFixture('./hvac-synthetic-nameplate.png','synthetic-nameplate.png');
+document.getElementById('fixDim').onclick=()=>runFixture('./hvac-synthetic-nameplate-dim.png','synthetic-nameplate-dim.png');
+console.info('[scanner-check] tess base', __scan.BASE);
+</script>
+</body>
+</html>
